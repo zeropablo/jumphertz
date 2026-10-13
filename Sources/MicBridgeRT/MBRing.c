@@ -17,6 +17,7 @@ struct MBRing {
     _Atomic uint64_t producer_rate_scalar_bits;
     _Atomic uint64_t producer_time_bits;
     _Atomic uint64_t producer_origin_bits;
+    _Atomic uint64_t capture_origin_bits;
 };
 
 MBRing *mb_ring_create(uint32_t capacity) {
@@ -37,6 +38,7 @@ MBRing *mb_ring_create(uint32_t capacity) {
     atomic_init(&ring->producer_rate_scalar_bits, 0);
     atomic_init(&ring->producer_time_bits, 0);
     atomic_init(&ring->producer_origin_bits, 0);
+    atomic_init(&ring->capture_origin_bits, 0);
     return ring;
 }
 
@@ -147,4 +149,16 @@ double mb_ring_producer_origin(const MBRing *ring) {
 
 uint64_t mb_ring_read_index(const MBRing *ring) {
     return atomic_load_explicit(&((MBRing *)ring)->read_index, memory_order_relaxed);
+}
+
+void mb_ring_publish_capture_origin(MBRing *ring, double origin_seconds) {
+    atomic_store_explicit(&ring->capture_origin_bits, d2b(origin_seconds), memory_order_relaxed);
+}
+
+double mb_ring_capture_origin(const MBRing *ring) {
+    return b2d(atomic_load_explicit(&((MBRing *)ring)->capture_origin_bits, memory_order_relaxed));
+}
+
+uint64_t mb_ring_write_index(const MBRing *ring) {
+    return atomic_load_explicit(&((MBRing *)ring)->write_index, memory_order_acquire);
 }

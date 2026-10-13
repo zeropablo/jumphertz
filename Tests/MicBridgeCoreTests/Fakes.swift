@@ -1,24 +1,22 @@
 import Foundation
 @testable import MicBridgeCore
 
-final class FakeBridge: AudioBridge {
-    let input: DeviceInfo
-    let output: DeviceInfo
-    var sampleRate: Double
-    var inputChannel: Int
+final class FakeOutputLeg: OutputLeg {
+    let device: DeviceInfo
+    let sampleRate: Double
+    var onEvent: ((BridgeEvent) -> Void)?
     var started = false
     var stopped = false
     var failOnStart = false
-    /// When false, every read of cycleCount advances (IO running). When true the counter is frozen.
+    var inputRates: [Double] = []
+    var latencyResets = 0
+    /// When false, every read of the stats advances the cycle counter (IO running).
     var stalled = false
-    private var cycles: UInt64 = 0
-    var onEvent: ((BridgeEvent) -> Void)?
+    var fakeStats = OutputStats()
 
-    init(input: DeviceInfo, output: DeviceInfo, inputChannel: Int) {
-        self.input = input
-        self.output = output
-        self.inputChannel = inputChannel
-        sampleRate = input.sampleRate
+    init(device: DeviceInfo) {
+        self.device = device
+        sampleRate = device.sampleRate
     }
 
     func start() throws {
@@ -26,6 +24,45 @@ final class FakeBridge: AudioBridge {
         started = true
     }
     func stop() { stopped = true }
+    func setInputRate(_ rate: Double) { inputRates.append(rate) }
+    func resetLatencyWindow() { latencyResets += 1 }
+    var stats: OutputStats {
+        if !stalled { fakeStats.cycles += 94 }
+        return fakeStats
+    }
+    var bufferFrameSize: Int? { 512 }
+    var running: Bool { started && !stopped }
+}
+
+final class FakeInputLeg: InputLeg {
+    let device: DeviceInfo
+    let sampleRate: Double
+    var inputChannel: Int
+    var onEvent: ((BridgeEvent) -> Void)?
+    var started = false
+    var stopped = false
+    var failOnStart = false
+    var stalled = false
+    var dropped: UInt64 = 0
+    private var cycles: UInt64 = 0
+    let output: FakeOutputLeg
+
+    init(device: DeviceInfo, inputChannel: Int, output: FakeOutputLeg) {
+        self.device = device
+        self.inputChannel = inputChannel
+        self.output = output
+        sampleRate = device.sampleRate
+    }
+
+    func start() throws {
+        if failOnStart { throw ChannelMapError.noOutputChannels }
+        started = true
+        output.setInputRate(sampleRate)
+    }
+    func stop() {
+        stopped = true
+        output.setInputRate(0)
+    }
     func setInputChannel(_ channel: Int) throws { inputChannel = channel }
     func setGain(dB: Double) {}
     func takePeak() -> Float { 0 }
@@ -35,41 +72,63 @@ final class FakeBridge: AudioBridge {
     }
     var signalCycleCount: UInt64 { 0 }
     var clipCount: UInt64 { 0 }
+    var droppedSamples: UInt64 { dropped }
     var lastCycleFrames: Int { 512 }
     var bufferFrameSize: Int? { 512 }
+    var running: Bool { started && !stopped }
 }
 
 final class FakeSystem: AudioSystem {
     var deviceList: [DeviceInfo]
     var aggregates: [AggregateInfo] = []
-    var bridges: [FakeBridge] = []
+    var outputs: [FakeOutputLeg] = []
+    var inputs: [FakeInputLeg] = []
     /// Number of upcoming starts that fail.
-    var failingStarts = 0
+    var failingOutputStarts = 0
+    var failingInputStarts = 0
+    var rateChanges: [(uid: String, rate: Double)] = []
     var onDevicesChanged: (() -> Void)?
 
     init(devices: [DeviceInfo]) { deviceList = devices }
 
-    var live: [FakeBridge] { bridges.filter { $0.started && !$0.stopped } }
+    var liveOutputs: [FakeOutputLeg] { outputs.filter(\.running) }
+    var liveInputs: [FakeInputLeg] { inputs.filter(\.running) }
 
     func devices() -> [DeviceInfo] { deviceList }
     func visibleAggregates() -> [AggregateInfo] { aggregates }
-    func makeBridge(input: DeviceInfo, output: DeviceInfo, inputChannel: Int, gainDb: Double,
-                    bufferFrames: Int?) -> AudioBridge {
-        let bridge = FakeBridge(input: input, output: output, inputChannel: inputChannel)
-        if failingStarts > 0 {
-            bridge.failOnStart = true
-            failingStarts -= 1
+
+    func makeOutputLeg(device: DeviceInfo, options: OutputOptions) -> OutputLeg {
+        let leg = FakeOutputLeg(device: device)
+        if failingOutputStarts > 0 {
+            leg.failOnStart = true
+            failingOutputStarts -= 1
         }
-        bridges.append(bridge)
-        return bridge
+        outputs.append(leg)
+        return leg
     }
-    func latency(input: DeviceInfo, output: DeviceInfo, bufferFrames: Int?) -> BridgeLatency {
+
+    func makeInputLeg(device: DeviceInfo, inputChannel: Int, gainDb: Double, bufferFrames: Int?,
+                      output: OutputLeg) -> InputLeg {
+        let leg = FakeInputLeg(device: device, inputChannel: inputChannel, output: output as! FakeOutputLeg)
+        if failingInputStarts > 0 {
+            leg.failOnStart = true
+            failingInputStarts -= 1
+        }
+        inputs.append(leg)
+        return leg
+    }
+
+    func setNominalSampleRate(_ rate: Double, of device: DeviceInfo) throws {
+        rateChanges.append((device.uid, rate))
+        update(device.uid) { $0.sampleRate = rate }
+    }
+
+    func latencyComponents(input: DeviceInfo, output: DeviceInfo) -> BridgeLatency {
         BridgeLatency(input: .init(deviceLatency: 0, safetyOffset: 0, streamLatency: 0, bufferFrames: 0),
                       output: .init(deviceLatency: 0, safetyOffset: 0, streamLatency: 0, bufferFrames: 0),
                       sampleRate: 48000)
     }
 
-    /// Replaces a device (by UID) and fires the device-list notification.
     func update(_ uid: String, _ change: (inout DeviceInfo) -> Void) {
         if let index = deviceList.firstIndex(where: { $0.uid == uid }) { change(&deviceList[index]) }
     }

@@ -2,14 +2,16 @@ import Foundation
 
 /// Snapshot written by the agent for `micbridge --status`.
 public struct AgentStatus: Codable, Equatable, Sendable {
-    public struct BridgeInfo: Codable, Equatable, Sendable {
-        public var inputName: String
-        public var inputUID: String
-        public var inputChannel: Int
-        public var outputName: String
-        public var outputUID: String
+    public struct Leg: Codable, Equatable, Sendable {
+        public var name: String
+        public var uid: String
         public var sampleRate: Double
         public var bufferFrames: Int?
+    }
+
+    public struct InputInfo: Codable, Equatable, Sendable {
+        public var leg: Leg
+        public var channel: Int
         public var gainDb: Double
     }
 
@@ -19,13 +21,13 @@ public struct AgentStatus: Codable, Equatable, Sendable {
     public var message: String?
     public var permission: MicPermission
     public var discordApps: [String]
-    public var bridge: BridgeInfo?
-    public var warnings: [String]
-    /// Rebuilds since the agent started (sample rate, hot plug, wake, IO stall).
-    public var rebuildCount: Int
+    public var output: Leg?
+    public var input: InputInfo?
+    public var resampler: OutputStats?
+    public var latency: BridgeController.LatencyWindow?
+    public var counters: BridgeController.Counters
     public var lastRecovery: BridgeController.Recovery?
-    /// IO cycles that missed their deadline since the agent started.
-    public var overloadCount: Int
+    public var warnings: [String]
     public var updatedAt: Date
 
     public init(controller: BridgeController, pid: Int32, version: String, now: Date = Date()) {
@@ -35,17 +37,23 @@ public struct AgentStatus: Codable, Equatable, Sendable {
         message = controller.message
         permission = controller.permissionStatus
         discordApps = controller.discordApps.sorted()
-        warnings = controller.warnings
-        rebuildCount = controller.rebuildCount
-        lastRecovery = controller.lastRecovery
-        overloadCount = controller.overloadCount
-        updatedAt = now
-        bridge = controller.bridge.map {
-            BridgeInfo(inputName: $0.input.name, inputUID: $0.input.uid, inputChannel: $0.inputChannel,
-                       outputName: $0.output.name, outputUID: $0.output.uid, sampleRate: $0.sampleRate,
-                       bufferFrames: $0.bufferFrameSize, gainDb: controller.config.gainDb)
+        output = controller.output.map {
+            Leg(name: $0.device.name, uid: $0.device.uid, sampleRate: $0.sampleRate, bufferFrames: $0.bufferFrameSize)
         }
+        input = controller.input.map {
+            InputInfo(leg: Leg(name: $0.device.name, uid: $0.device.uid, sampleRate: $0.sampleRate,
+                               bufferFrames: $0.bufferFrameSize),
+                      channel: $0.inputChannel, gainDb: controller.config.gainDb)
+        }
+        resampler = controller.output?.stats
+        latency = controller.latency
+        counters = controller.counters
+        lastRecovery = controller.lastRecovery
+        warnings = controller.warnings
+        updatedAt = now
     }
+
+    public var bridging: Bool { input != nil && output != nil }
 }
 
 public enum StatusStore {
@@ -75,6 +83,15 @@ public enum StatusStore {
     public static func live(from url: URL = fileURL) -> AgentStatus? {
         guard let status = read(from: url), executableName(of: status.pid) == "MicBridge" else { return nil }
         return status
+    }
+
+    /// Pid of a live agent whose status file this version cannot decode (an older or newer MicBridge).
+    public static func liveAgentOfAnotherVersion(from url: URL = fileURL) -> Int32? {
+        guard read(from: url) == nil, let data = try? Data(contentsOf: url),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let pid = (object["pid"] as? NSNumber)?.int32Value,
+              executableName(of: pid) == "MicBridge" else { return nil }
+        return pid
     }
 
     static func executableName(of pid: Int32) -> String? {

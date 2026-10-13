@@ -30,8 +30,10 @@ typedef struct {
     double max_correction;
     /// Time constant of the fill level low-pass filter, seconds.
     double fill_filter_seconds;
-    /// Safety margin added to the target fill, seconds of input.
+    /// Safety margin added to the target fill, seconds of input...
     double margin_seconds;
+    /// ...plus this fraction of a producer block, for late input callbacks (scheduling jitter).
+    double producer_margin_fraction;
     /// Fade-in after (re)start and fade-out to silence, seconds.
     double fade_in_seconds;
     double fade_out_seconds;
@@ -59,9 +61,20 @@ typedef struct {
     uint64_t timed_cycles;
     /// 0 = medium quality sinc, 1 = fastest sinc (used above 50 kHz input).
     int converter;
+    /// Measured latency, seconds: from the capture of a sample at the input device to its presentation in the
+    /// output device, from the HAL timestamps of both IO cycles. Last value, and min / mean / max since the
+    /// last mb_output_reset_latency(). count = 0 when nothing was measured.
+    double latency_last;
+    double latency_min;
+    double latency_mean;
+    double latency_max;
+    uint64_t latency_count;
 } MBOutputStats;
 
+/// Safe defaults (the margins validated in simulation with ±20 % callback jitter).
 MBOutputTuning mb_output_default_tuning(void);
+/// Reduced jitter margin: lower latency, to be validated on the actual hardware.
+MBOutputTuning mb_output_reduced_margin_tuning(void);
 
 // MARK: Control thread (allocates)
 
@@ -79,15 +92,19 @@ void mb_output_set_input_rate(MBOutputStage *_Nonnull stage, double input_rate);
 
 /// Writes `frames` frames to each of the `count` destinations (interleaved buffers, one channel each).
 /// `output_rate_scalar`: the HAL's mRateScalar of the cycle (0 if unknown).
-/// `host_seconds`: ideal time of the IO cycle (mHostTime in seconds, 0 if unknown). With the producer's
+/// `host_seconds`: ideal time of the IO cycle (inNow in seconds, 0 if unknown). With the producer's
 /// timing it gives a fill estimate independent of the callbacks' order; without, the raw fill is used.
+/// `present_seconds`: when the first frame written here will be presented (inOutputTime, 0 if unknown);
+/// used for the latency measurement only.
 void mb_output_process(MBOutputStage *_Nonnull stage, float *_Nonnull const *_Nonnull destinations,
                        const uint32_t *_Nonnull strides, uint32_t count, uint32_t frames,
-                       double output_rate_scalar, double host_seconds);
+                       double output_rate_scalar, double host_seconds, double present_seconds);
 
 // MARK: Statistics (any thread, each field individually consistent)
 
 void mb_output_get_stats(const MBOutputStage *_Nonnull stage, MBOutputStats *_Nonnull stats);
+/// Starts a new min / mean / max latency window (applied by the IO thread at its next cycle).
+void mb_output_reset_latency(MBOutputStage *_Nonnull stage);
 
 #ifdef __cplusplus
 }

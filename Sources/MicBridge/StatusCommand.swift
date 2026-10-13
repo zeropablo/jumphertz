@@ -10,6 +10,8 @@ enum StatusCommand {
 
         if let status {
             print("Agent:        running (pid \(status.pid), v\(status.version))")
+        } else if let pid = StatusStore.liveAgentOfAnotherVersion() {
+            print("Agent:        running (pid \(pid)), another MicBridge version: reinstall to see its state")
         } else {
             print("Agent:        not running")
         }
@@ -30,21 +32,38 @@ enum StatusCommand {
 
         print("Microphone:   \(describe(status.permission))")
         print("State:        \(status.state.rawValue)\(status.message.map { " — \($0)" } ?? "")")
-        if let bridge = status.bridge {
-            print("Bridge:       active")
-            print("  Input:      \(bridge.inputName), channel \(bridge.inputChannel)")
-            print("  Output:     \(bridge.outputName) (L+R)")
-            print("  Rate:       \(Int(bridge.sampleRate)) Hz, buffer \(bridge.bufferFrames.map(String.init) ?? "?") frames, gain \(String(format: "%+.1f", bridge.gainDb)) dB")
+        if let output = status.output {
+            print("Output:       \(output.name) @ \(Int(output.sampleRate)) Hz, IO buffer \(output.bufferFrames.map(String.init) ?? "?") frames")
         } else {
-            print("Bridge:       inactive")
+            print("Output:       inactive")
         }
-        var recovery = "Rebuilds:     \(status.rebuildCount)"
+        if let input = status.input {
+            print("Input:        \(input.leg.name), channel \(input.channel) @ \(Int(input.leg.sampleRate)) Hz, IO buffer \(input.leg.bufferFrames.map(String.init) ?? "?") frames, gain \(String(format: "%+.1f", input.gainDb)) dB")
+        } else {
+            print("Input:        inactive")
+        }
+        if let r = status.resampler, status.output != nil {
+            print(String(format: "Ring:         %@, fill %.0f / target %d frames, correction %+.1f ppm",
+                         r.state.rawValue, r.estimatedFill, r.targetFill, r.correctionPPM))
+        }
+        if let latency = status.latency {
+            print(String(format: "Latency:      %.1f ms measured (min %.1f, max %.1f; capture → output device, last 5 s)",
+                         latency.meanMs, latency.minMs, latency.maxMs))
+        }
+        let c = status.counters
+        print("Underruns:    \(c.underruns) total, \(c.underrunsSinceInputStart) since the input leg started")
+        print("Overflows:    \(c.overflows) total, \(c.overflowsSinceInputStart) since the input leg started (dropped samples: \(c.droppedSamples))")
+        var rebuilds = "Rebuilds:     input \(c.inputRebuilds), output \(c.outputRebuilds)"
         if let last = status.lastRecovery {
             let ago = Int(Date().timeIntervalSince(last.at))
-            recovery += " — last: \(last.reason), recovered in \(last.milliseconds) ms (\(ago) s ago)"
+            rebuilds += " — last: \(last.reason), recovered in \(last.milliseconds) ms (\(ago) s ago)"
         }
-        print(recovery)
-        print("Overloads:    \(status.overloadCount)")
+        print(rebuilds)
+        print("Overloads:    \(c.overloads)")
+        print("BlackHole format changes while Discord running: \(c.outputFormatChangesWhileDiscordRunning)")
+        if c.outputFormatChangesWhileDiscordRunning > 0 {
+            print("! The output device changed format \(c.outputFormatChangesWhileDiscordRunning) time(s) while Discord was running. MicBridge never does this; another app did (Audio MIDI Setup, a DAW, a Multi-Output Device). Discord may have lost its input: leave and rejoin the voice channel.")
+        }
         for warning in status.warnings { print("! \(warning)") }
     }
 

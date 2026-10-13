@@ -11,24 +11,35 @@ public struct Config: Equatable, Sendable {
     public var inputChannel: Int
     public var gainDb: Double
     public var enabled: Bool
-    /// IO buffer size requested on the aggregate. `nil` = leave the HAL default untouched.
+    /// IO buffer size requested on the interface. `nil` = leave the HAL default untouched.
     /// The HAL runs a device at the smallest size any client asks for, so this also affects the Scarlett
     /// for every other app while the bridge runs.
     public var bufferFrames: Int?
+    /// Latency lever 1: IO buffer size of MicBridge's own IOProc on the output device (BlackHole).
+    /// `nil` (default) = untouched.
+    public var outputBufferFrames: Int?
+    /// Latency lever 2: smaller jitter margin in the ring. `false` (default) = validated safe margin.
+    public var reducedLatencyMargin: Bool
 
     public static let gainRange: ClosedRange<Double> = -60...24
     public static let bufferFramesRange: ClosedRange<Int> = 16...4096
     public static let `default` = Config(deviceUID: nil, outputDeviceUID: nil, inputChannel: 1, gainDb: 0,
-                                         enabled: true, bufferFrames: nil)
+                                         enabled: true)
 
     public init(deviceUID: String?, outputDeviceUID: String?, inputChannel: Int, gainDb: Double, enabled: Bool,
-                bufferFrames: Int? = nil) {
+                bufferFrames: Int? = nil, outputBufferFrames: Int? = nil, reducedLatencyMargin: Bool = false) {
         self.deviceUID = deviceUID
         self.outputDeviceUID = outputDeviceUID
         self.inputChannel = inputChannel
         self.gainDb = gainDb
         self.enabled = enabled
         self.bufferFrames = bufferFrames
+        self.outputBufferFrames = outputBufferFrames
+        self.reducedLatencyMargin = reducedLatencyMargin
+    }
+
+    public var outputOptions: OutputOptions {
+        OutputOptions(bufferFrames: outputBufferFrames, reducedMargin: reducedLatencyMargin)
     }
 
     public var linearGain: Float { Config.linearGain(dB: gainDb) }
@@ -50,7 +61,7 @@ public enum ConfigError: Error, Equatable, CustomStringConvertible {
 
 extension Config: Codable {
     enum CodingKeys: String, CodingKey {
-        case deviceUID, outputDeviceUID, inputChannel, gainDb, enabled, bufferFrames
+        case deviceUID, outputDeviceUID, inputChannel, gainDb, enabled, bufferFrames, outputBufferFrames, reducedLatencyMargin
     }
 
     /// Missing keys fall back to defaults; present keys must have the right type.
@@ -63,6 +74,8 @@ extension Config: Codable {
         gainDb = try c.decodeIfPresent(Double.self, forKey: .gainDb) ?? d.gainDb
         enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? d.enabled
         bufferFrames = try c.decodeIfPresent(Int.self, forKey: .bufferFrames)
+        outputBufferFrames = try c.decodeIfPresent(Int.self, forKey: .outputBufferFrames)
+        reducedLatencyMargin = try c.decodeIfPresent(Bool.self, forKey: .reducedLatencyMargin) ?? false
     }
 
     /// Writes `null` explicitly for unset UIDs so the file documents every key.
@@ -74,6 +87,8 @@ extension Config: Codable {
         try c.encode(gainDb, forKey: .gainDb)
         try c.encode(enabled, forKey: .enabled)
         try c.encode(bufferFrames, forKey: .bufferFrames)
+        try c.encode(outputBufferFrames, forKey: .outputBufferFrames)
+        try c.encode(reducedLatencyMargin, forKey: .reducedLatencyMargin)
     }
 }
 
@@ -101,10 +116,12 @@ extension Config {
                 key: "gainDb",
                 reason: "must be between \(Int(Config.gainRange.lowerBound)) and \(Int(Config.gainRange.upperBound))")
         }
-        if let bufferFrames, !Config.bufferFramesRange.contains(bufferFrames) {
-            throw ConfigError.invalidValue(
-                key: "bufferFrames",
-                reason: "must be null or between \(Config.bufferFramesRange.lowerBound) and \(Config.bufferFramesRange.upperBound)")
+        for (key, value) in [("bufferFrames", bufferFrames), ("outputBufferFrames", outputBufferFrames)] {
+            if let value, !Config.bufferFramesRange.contains(value) {
+                throw ConfigError.invalidValue(
+                    key: key,
+                    reason: "must be null or between \(Config.bufferFramesRange.lowerBound) and \(Config.bufferFramesRange.upperBound)")
+            }
         }
         for (key, uid) in [("deviceUID", deviceUID), ("outputDeviceUID", outputDeviceUID)] {
             if let uid, uid.trimmingCharacters(in: .whitespaces).isEmpty {

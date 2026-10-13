@@ -3,7 +3,7 @@ import Foundation
 import os
 
 
-/// Prefix of the UIDs of the private aggregates this process creates.
+/// Prefix of the private aggregates created by MicBridge 0.3 and earlier (ignored in listings).
 let aggregateUIDPrefix = "com.zeropablo.micbridge.aggregate"
 
 public final class CoreAudioSystem: AudioSystem {
@@ -68,18 +68,29 @@ public final class CoreAudioSystem: AudioSystem {
         }
     }
 
-    public func makeBridge(input: DeviceInfo, output: DeviceInfo, inputChannel: Int, gainDb: Double,
-                           bufferFrames: Int?) -> AudioBridge {
-        CoreAudioBridge(input: input, output: output, inputChannel: inputChannel, gainDb: gainDb,
-                        bufferFrames: bufferFrames)
+    public func makeOutputLeg(device: DeviceInfo, options: OutputOptions) -> OutputLeg {
+        CoreAudioOutputLeg(device: device, options: options)
     }
 
-    /// Interface input path + bridge output path. `bufferFrames` replaces the devices' current buffer size
-    /// when set (that is what the bridge would request).
-    public func latency(input: DeviceInfo, output: DeviceInfo, bufferFrames: Int?) -> BridgeLatency {
+    public func makeInputLeg(device: DeviceInfo, inputChannel: Int, gainDb: Double, bufferFrames: Int?,
+                             output: OutputLeg) -> InputLeg {
+        CoreAudioInputLeg(device: device, inputChannel: inputChannel, gainDb: gainDb, bufferFrames: bufferFrames,
+                          output: output as! CoreAudioOutputLeg)
+    }
+
+    public func setNominalSampleRate(_ rate: Double, of device: DeviceInfo) throws {
+        let supported = HAL.availableSampleRates(device.id).contains { $0.mMinimum <= rate && rate <= $0.mMaximum }
+        guard supported else {
+            throw HALError(kAudioDeviceUnsupportedFormatError, "\(device.name) does not support \(Int(rate)) Hz")
+        }
+        try HAL.set(device.id, HAL.address(kAudioDevicePropertyNominalSampleRate), Float64(rate))
+    }
+
+    /// Interface input path + output device path, from the HAL's static properties.
+    public func latencyComponents(input: DeviceInfo, output: DeviceInfo) -> BridgeLatency {
         BridgeLatency(
-            input: Self.latencyComponents(input.id, scope: kAudioObjectPropertyScopeInput, bufferFrames: bufferFrames),
-            output: Self.latencyComponents(output.id, scope: kAudioObjectPropertyScopeOutput, bufferFrames: bufferFrames),
+            input: Self.latencyComponents(input.id, scope: kAudioObjectPropertyScopeInput, bufferFrames: nil),
+            output: Self.latencyComponents(output.id, scope: kAudioObjectPropertyScopeOutput, bufferFrames: nil),
             sampleRate: (try? HAL.nominalSampleRate(input.id)) ?? input.sampleRate)
     }
 

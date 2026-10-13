@@ -10,47 +10,45 @@ struct ChannelMapTests {
         #expect(ChannelMap.locate(globalChannel: -1, channelsPerBuffer: [18, 2]) == nil)
     }
 
-    /// Scarlett 16i16 (18 in / 16 out, one stream each) + BlackHole 2ch.
-    @Test func scarlett16i16PlusBlackHole() throws {
-        let plan = try ChannelMap.plan(aggregateInput: [18, 2], aggregateOutput: [16, 2],
-                                       micInputs: 18, micOutputs: 16, sinkOutputs: 2, inputChannel: 1)
-        #expect(plan.source == ChannelLocation(buffer: 0, channel: 0))
-        #expect(plan.destinations == [ChannelLocation(buffer: 1, channel: 0), ChannelLocation(buffer: 1, channel: 1)])
-        #expect(plan.inputStreamsEnabled == [true, false])
-        #expect(plan.outputStreamsEnabled == [false, true])
+    /// Scarlett 16i16 4th Gen: one 18-channel input stream.
+    @Test func scarlettInput() throws {
+        let routing = try ChannelMap.input(layout: [18], inputChannel: 1)
+        #expect(routing.source == ChannelLocation(buffer: 0, channel: 0))
+        #expect(routing.inputStreamsEnabled == [true])
+        #expect(try ChannelMap.input(layout: [18], inputChannel: 18).source == ChannelLocation(buffer: 0, channel: 17))
     }
 
-    /// Interfaces exposing several streams, and a BlackHole 16ch output.
-    @Test func multiStreamInterface() throws {
-        let plan = try ChannelMap.plan(aggregateInput: [2, 2, 16], aggregateOutput: [2, 2, 16],
-                                       micInputs: 4, micOutputs: 4, sinkOutputs: 16, inputChannel: 3)
-        #expect(plan.source == ChannelLocation(buffer: 1, channel: 0))
-        #expect(plan.destinations == [ChannelLocation(buffer: 2, channel: 0), ChannelLocation(buffer: 2, channel: 1)])
-        #expect(plan.inputStreamsEnabled == [true, true, false])
-        #expect(plan.outputStreamsEnabled == [false, false, true])
-    }
-
-    @Test func monoOutputGetsOneDestination() throws {
-        let plan = try ChannelMap.plan(aggregateInput: [2, 1], aggregateOutput: [2, 1],
-                                       micInputs: 2, micOutputs: 2, sinkOutputs: 1, inputChannel: 2)
-        #expect(plan.destinations == [ChannelLocation(buffer: 1, channel: 0)])
+    /// Interfaces exposing several streams keep them all on (channel switch without rebuild).
+    @Test func multiStreamInput() throws {
+        let routing = try ChannelMap.input(layout: [2, 2, 4], inputChannel: 3)
+        #expect(routing.source == ChannelLocation(buffer: 1, channel: 0))
+        #expect(routing.inputStreamsEnabled == [true, true, true])
     }
 
     @Test func rejectsOutOfRangeChannel() {
         #expect(throws: ChannelMapError.inputChannelOutOfRange(requested: 3, available: 2)) {
-            try ChannelMap.plan(aggregateInput: [2, 2], aggregateOutput: [2, 2],
-                                micInputs: 2, micOutputs: 2, sinkOutputs: 2, inputChannel: 3)
+            try ChannelMap.input(layout: [2], inputChannel: 3)
         }
         #expect(throws: ChannelMapError.inputChannelOutOfRange(requested: 0, available: 2)) {
-            try ChannelMap.plan(aggregateInput: [2, 2], aggregateOutput: [2, 2],
-                                micInputs: 2, micOutputs: 2, sinkOutputs: 2, inputChannel: 0)
+            try ChannelMap.input(layout: [2], inputChannel: 0)
         }
     }
 
-    @Test func rejectsUnexpectedLayout() {
-        #expect(throws: ChannelMapError.self) {
-            try ChannelMap.plan(aggregateInput: [18, 2], aggregateOutput: [16],
-                                micInputs: 18, micOutputs: 16, sinkOutputs: 2, inputChannel: 1)
-        }
+    @Test func blackHoleOutputs() throws {
+        let stereo = try ChannelMap.output(layout: [2])
+        #expect(stereo.destinations == [ChannelLocation(buffer: 0, channel: 0), ChannelLocation(buffer: 0, channel: 1)])
+        #expect(stereo.outputStreamsEnabled == [true])
+
+        let wide = try ChannelMap.output(layout: [16])      // BlackHole 16ch: channels 1 + 2
+        #expect(wide.destinations == [ChannelLocation(buffer: 0, channel: 0), ChannelLocation(buffer: 0, channel: 1)])
+
+        let split = try ChannelMap.output(layout: [1, 1, 2])
+        #expect(split.destinations == [ChannelLocation(buffer: 0, channel: 0), ChannelLocation(buffer: 1, channel: 0)])
+        #expect(split.outputStreamsEnabled == [true, true, false])
+    }
+
+    @Test func monoAndEmptyOutputs() throws {
+        #expect(try ChannelMap.output(layout: [1]).destinations == [ChannelLocation(buffer: 0, channel: 0)])
+        #expect(throws: ChannelMapError.noOutputChannels) { try ChannelMap.output(layout: []) }
     }
 }

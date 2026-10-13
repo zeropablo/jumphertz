@@ -1,19 +1,25 @@
 import Foundation
 import MicBridgeCore
 
-/// Runs the bridge without Discord and shows, continuously: VU meter (post-gain), aggregate buffer size,
-/// measured IO cycles per second, and stalls of the IO callback.
+/// Runs the bridge without Discord and shows, continuously: VU meter (post-gain), both IO buffer sizes,
+/// input cycles per second, ring fill vs target, drift correction, measured latency, IO stalls.
 enum TestCommand {
-    /// The IO callback is considered stalled when the cycle counter has not moved for this long.
+    /// An IO callback is considered stalled when its cycle counter has not moved for this long.
     static let stallThreshold: TimeInterval = 0.2
     static let pollInterval: TimeInterval = 0.02
     static let redrawInterval: TimeInterval = 0.1
+    /// Latency statistics start after the ring has converged.
+    static let settleSeconds: TimeInterval = 2
 
     static func run(seconds: Int, channelOverride: Int?, gainOverride: Double?) {
         guard seconds > 0 else { fail("--seconds must be positive") }
         // Two bridges would both write into BlackHole and the signals would add up.
-        if let agent = StatusStore.live(), agent.bridge != nil {
+        if let agent = StatusStore.live(), agent.bridging {
             fail("the MicBridge agent (pid \(agent.pid)) is already bridging. Quit Discord or stop the agent first:\n"
+                 + "  launchctl bootout gui/$(id -u)/com.zeropablo.micbridge")
+        }
+        if let pid = StatusStore.liveAgentOfAnotherVersion() {
+            fail("a MicBridge agent of another version is running (pid \(pid)) and may be bridging. Reinstall, or stop it first:\n"
                  + "  launchctl bootout gui/$(id -u)/com.zeropablo.micbridge")
         }
         let system = CoreAudioSystem()
@@ -21,22 +27,28 @@ enum TestCommand {
         if let channelOverride { config.inputChannel = channelOverride }
         if let gainOverride { config.gainDb = gainOverride }
         do { try config.validate() } catch { fail(String(describing: error)) }
-        let (input, output) = DeviceResolution.resolve(system: system, config: config)
+        let (inputDevice, outputDevice) = DeviceResolution.resolve(system: system, config: config)
 
         if let frames = config.bufferFrames {
-            print("! bufferFrames = \(frames): while the bridge runs, \(input.name) uses this buffer size for every app.")
+            print("! bufferFrames = \(frames): while the bridge runs, \(inputDevice.name) uses this buffer size for every app.")
+        }
+        if let frames = config.outputBufferFrames { print("Latency lever: outputBufferFrames = \(frames)") }
+        if config.reducedLatencyMargin { print("Latency lever: reducedLatencyMargin on") }
+
+        let output = system.makeOutputLeg(device: outputDevice, options: config.outputOptions)
+        do { try output.start() } catch { fail(String(describing: error)) }
+        let input = system.makeInputLeg(device: inputDevice, inputChannel: config.inputChannel, gainDb: config.gainDb,
+                                        bufferFrames: config.bufferFrames, output: output)
+        do { try input.start() } catch {
+            output.stop()
+            fail(String(describing: error))
         }
 
-        let bridge = system.makeBridge(input: input, output: output, inputChannel: config.inputChannel,
-                                       gainDb: config.gainDb, bufferFrames: config.bufferFrames)
-        do { try bridge.start() } catch { fail(String(describing: error)) }
-
-        let rate = bridge.sampleRate
         let live = isatty(STDOUT_FILENO) != 0
         print("""
-            \(input.name) input \(config.inputChannel) → \(output.name) L+R \
-            @ \(Int(rate)) Hz, gain \(String(format: "%+.1f", config.gainDb)) dB, \
-            aggregate buffer \(bridge.bufferFrameSize.map(String.init) ?? "?") frames
+            \(inputDevice.name) input \(config.inputChannel) @ \(Int(input.sampleRate)) Hz → \
+            \(outputDevice.name) L+R @ \(Int(output.sampleRate)) Hz, gain \(String(format: "%+.1f", config.gainDb)) dB
+            IO buffers: input \(input.bufferFrameSize.map(String.init) ?? "?"), output \(output.bufferFrameSize.map(String.init) ?? "?") frames
             Speak into the microphone. Ctrl-C to stop.\(live ? "\n" : "")
             """)
 
@@ -49,14 +61,33 @@ enum TestCommand {
 
         let start = Date()
         var window: [(time: Date, cycles: UInt64)] = []   // last ~1 s of samples, for cycles/s
-        var lastCycles: UInt64 = 0
-        var lastCycleChange = start
-        var stalled = false
+        var lastCycles: (input: UInt64, output: UInt64) = (0, 0)
+        var lastChange = (input: start, output: start)
+        var stalled = (input: false, output: false)
         var stallCount = 0
         var longestStall: TimeInterval = 0
         var maxPeak: Float = 0
         var displayPeak: Float = 0
         var nextRedraw = start
+        var latencyWindowStarted = false
+
+        func watch(_ cycles: UInt64, _ last: inout UInt64, _ changed: inout Date, _ isStalled: inout Bool,
+                   _ name: String, at t: Date) {
+            if cycles != last {
+                if isStalled {
+                    let gap = t.timeIntervalSince(changed)
+                    longestStall = max(longestStall, gap)
+                    message("! \(name) IO callback resumed after \(Int(gap * 1000)) ms", live: live)
+                    isStalled = false
+                }
+                last = cycles
+                changed = t
+            } else if !isStalled, t.timeIntervalSince(changed) > stallThreshold {
+                isStalled = true
+                stallCount += 1
+                message("! \(name) IO callback stalled: no cycle for more than \(Int(stallThreshold * 1000)) ms", live: live)
+            }
+        }
 
         while !interrupted {
             let now = Date()
@@ -64,51 +95,49 @@ enum TestCommand {
             RunLoop.main.run(until: now.addingTimeInterval(pollInterval))
 
             let t = Date()
-            let cycles = bridge.cycleCount
-            if cycles != lastCycles {
-                if stalled {
-                    let gap = t.timeIntervalSince(lastCycleChange)
-                    longestStall = max(longestStall, gap)
-                    message("! IO callback resumed after \(Int(gap * 1000)) ms", live: live)
-                    stalled = false
-                }
-                lastCycles = cycles
-                lastCycleChange = t
-            } else if !stalled, t.timeIntervalSince(lastCycleChange) > stallThreshold {
-                stalled = true
-                stallCount += 1
-                message("! IO callback stalled: no cycle for more than \(Int(stallThreshold * 1000)) ms", live: live)
+            let inputCycles = input.cycleCount
+            let stats = output.stats
+            watch(inputCycles, &lastCycles.input, &lastChange.input, &stalled.input, "input", at: t)
+            watch(stats.cycles, &lastCycles.output, &lastChange.output, &stalled.output, "output", at: t)
+            if !latencyWindowStarted, t.timeIntervalSince(start) >= settleSeconds {
+                output.resetLatencyWindow()
+                latencyWindowStarted = true
             }
 
-            window.append((t, cycles))
+            window.append((t, inputCycles))
             window.removeAll { t.timeIntervalSince($0.time) > 1.0 }
 
-            displayPeak = max(displayPeak, bridge.takePeak())
+            displayPeak = max(displayPeak, input.takePeak())
             if t >= nextRedraw {
                 maxPeak = max(maxPeak, displayPeak)
                 if live {
-                    let status = String(format: "buf %@  %5.1f cyc/s  %5.1f/%d s",
-                                        bridge.bufferFrameSize.map(String.init) ?? "?",
-                                        cyclesPerSecond(window), t.timeIntervalSince(start), seconds)
-                    print(clearLine + liveLine(peak: displayPeak, status: status, width: terminalWidth()),
-                          terminator: "")
+                    let status = String(format: "fill %4.0f/%d  %+6.1f ppm  lat %4.1f ms  %5.1f/%d s",
+                                        stats.estimatedFill, stats.targetFill, stats.correctionPPM,
+                                        stats.latencyMean * 1000, t.timeIntervalSince(start), seconds)
+                    print(clearLine + liveLine(peak: displayPeak, status: status, width: terminalWidth()), terminator: "")
                     fflush(stdout)
                 }
                 displayPeak = 0
                 nextRedraw = t.addingTimeInterval(redrawInterval)
             }
         }
-        if stalled { longestStall = max(longestStall, Date().timeIntervalSince(lastCycleChange)) }
+        if stalled.input || stalled.output {
+            longestStall = max(longestStall, Date().timeIntervalSince(min(lastChange.input, lastChange.output)))
+        }
 
-        // Read every counter at the same instant, before stop() frees the context.
+        // Read every counter at the same instant, before stopping frees the stages.
         let elapsed = Date().timeIntervalSince(start)
-        let cycles = bridge.cycleCount
-        let signalCycles = bridge.signalCycleCount
-        let clips = bridge.clipCount
-        let framesPerCycle = bridge.lastCycleFrames
-        let bufferFrames = bridge.bufferFrameSize ?? 0
-        maxPeak = max(maxPeak, displayPeak, bridge.takePeak())
-        bridge.stop()
+        let cycles = input.cycleCount
+        let signalCycles = input.signalCycleCount
+        let clips = input.clipCount
+        let dropped = input.droppedSamples
+        let framesPerCycle = input.lastCycleFrames
+        let bufferFrames = input.bufferFrameSize ?? 0
+        let rate = input.sampleRate
+        let stats = output.stats
+        maxPeak = max(maxPeak, displayPeak, input.takePeak())
+        input.stop()
+        output.stop()
 
         let measured = elapsed > 0 ? Double(cycles) / elapsed : 0
         let expected = framesPerCycle > 0 ? rate / Double(framesPerCycle) : 0
@@ -116,15 +145,22 @@ enum TestCommand {
         if live { print(clearLine) }
         print(interrupted ? "Stopped by Ctrl-C after \(String(format: "%.2f", elapsed)) s." :
                             "Completed after \(String(format: "%.2f", elapsed)) s.")
-        print(String(format: "IO cycles: %llu (%.2f/s, expected %.2f/s for %d frames @ %d Hz)",
+        print(String(format: "Input IO cycles: %llu (%.2f/s, expected %.2f/s for %d frames @ %d Hz)",
                      cycles, measured, expected, framesPerCycle, Int(rate)))
         print("Cycles with signal: \(signalCycles)   Max peak: \(dbfs(maxPeak))   Clipped samples: \(clips)")
+        print(String(format: "Ring: fill %.0f / target %d frames, correction %+.1f ppm, underruns %llu, overflows %llu, dropped %llu",
+                     stats.estimatedFill, stats.targetFill, stats.correctionPPM, stats.underruns, stats.overflows, dropped))
+        if stats.latencyCount > 0 {
+            print(String(format: "Measured latency (capture → %@): mean %.2f ms, min %.2f, max %.2f (%llu cycles)",
+                         outputDevice.name, stats.latencyMean * 1000, stats.latencyMin * 1000, stats.latencyMax * 1000,
+                         stats.latencyCount))
+        }
         print("Stalls > \(Int(stallThreshold * 1000)) ms: \(stallCount)" +
               (stallCount > 0 ? " (longest \(Int(longestStall * 1000)) ms)" : ""))
         // Machine-readable line, used by scripts/check-test-summary.sh.
-        print(String(format: "summary: elapsed=%.3f cycles=%llu rate=%d frames=%d buffer=%d cycles_per_s=%.2f expected_per_s=%.2f clips=%llu stalls=%d interrupted=%d",
+        print(String(format: "summary: elapsed=%.3f cycles=%llu rate=%d frames=%d buffer=%d cycles_per_s=%.2f expected_per_s=%.2f clips=%llu stalls=%d interrupted=%d underruns=%llu overflows=%llu latency_ms=%.2f",
                      elapsed, cycles, Int(rate), framesPerCycle, bufferFrames, measured, expected,
-                     clips, stallCount, interrupted ? 1 : 0))
+                     clips, stallCount, interrupted ? 1 : 0, stats.underruns, stats.overflows, stats.latencyMean * 1000))
 
         if expected > 0, elapsed > 2, abs(measured - expected) / expected > 0.05 {
             print("! Measured cycle rate differs from the expected rate by more than 5 %.")
@@ -135,7 +171,7 @@ enum TestCommand {
                   : "! Clipping at the source: the Scarlett input reached full scale. Lower its preamp gain until the gain halo stays green.")
         }
         if cycles == 0 {
-            fail("the audio device never ran")
+            fail("the interface never ran")
         } else if signalCycles == 0 {
             print("""
                 ! The input was pure digital silence. Most likely the microphone permission is denied for the \

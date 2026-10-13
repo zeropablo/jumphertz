@@ -41,6 +41,18 @@ struct ResamplingTests {
 
     // MARK: Drift
 
+    @Test func reducedMarginStillSteady() {
+        let r = run {
+            $0.seconds = 600
+            $0.settle_seconds = 60
+            $0.input_ppm = 80
+            $0.jitter = 0.05           // realistic HAL scheduling, not the ±20 % stress value
+            $0.tuning = mb_output_reduced_margin_tuning()
+        }
+        report("reduced margin, jitter 5 %", r)
+        expectSteady(r, maxSlope: 0.5)
+    }
+
     /// 30 simulated minutes, 44.1 → 48 kHz, clocks 100 ppm apart, no help from HAL rate scalars:
     /// the fill loop alone must absorb the drift.
     @Test func thirtyMinutes44to48WithoutDrift() {
@@ -52,6 +64,13 @@ struct ResamplingTests {
         }
         report("30 min 44.1→48, +80/-20 ppm, no scalars", r)
         expectSteady(r, maxSlope: 0.1)
+        // Measured latency = fill estimate (the virtual write position follows the capture clock) + one output
+        // block until presentation; and it does not wander.
+        let expected = Double(r.target_fill) / 44100 + 512 / 48000.0
+        print(String(format: "latency measured %.2f / %.2f / %.2f ms (min/mean/max), model %.2f ms",
+                     r.latency_min * 1000, r.latency_mean * 1000, r.latency_max * 1000, expected * 1000))
+        #expect(abs(r.latency_mean - expected) < 0.002)
+        #expect(r.latency_max - r.latency_min < 0.003)
         // The correction settled on the clock mismatch (≈ +100 ppm) without oscillating.
         #expect(r.correction_max_ppm - r.correction_min_ppm < 20)
         #expect(r.correction_min_ppm > 80 && r.correction_max_ppm < 120)

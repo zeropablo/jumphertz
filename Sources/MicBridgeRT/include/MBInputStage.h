@@ -24,9 +24,10 @@ void mb_input_set_gain(MBInputStage *_Nonnull stage, float linear_gain);
 
 /// `samples` points at the selected channel inside an interleaved buffer of `stride` channels.
 /// `rate_scalar`: the HAL's mRateScalar of the cycle (0 if unknown).
-/// `host_seconds`: ideal time of the IO cycle (mHostTime in seconds, 0 if unknown).
+/// `host_seconds`: ideal time of the IO cycle (inNow, in seconds; 0 if unknown).
+/// `capture_seconds`: when the first frame of this block was captured (inInputTime; 0 if unknown).
 void mb_input_process(MBInputStage *_Nonnull stage, const float *_Nonnull samples, uint32_t stride,
-                      uint32_t frames, double rate_scalar, double host_seconds);
+                      uint32_t frames, double rate_scalar, double host_seconds, double capture_seconds);
 
 // MARK: Statistics (any thread)
 

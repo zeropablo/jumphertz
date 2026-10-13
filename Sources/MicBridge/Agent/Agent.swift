@@ -23,7 +23,7 @@ final class Agent {
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)  // LSUIElement: no Dock icon, no menu bar
 
-        log.info("MicBridge \(version, privacy: .public) agent started (pid \(getpid()))")
+        log.notice("MicBridge \(version, privacy: .public) agent started (pid \(getpid()))")
         controller.onChange = { [weak self] _ in self?.writeStatus() }
         discord.onChange = { [weak self] apps in self?.controller.setDiscordApps(apps) }
         discord.start()
@@ -58,7 +58,7 @@ final class Agent {
     }
 
     private func terminate(signal: Int32) {
-        log.info("Received signal \(signal), shutting down")
+        log.notice("Received signal \(signal), shutting down")
         controller.shutdown()
         StatusStore.remove()
         exit(0)

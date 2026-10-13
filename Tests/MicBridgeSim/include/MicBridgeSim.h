@@ -59,6 +59,8 @@ typedef struct {
     /// Steady-state fill estimate used by the loop, min / max (input frames).
     double estimate_min, estimate_max;
     uint64_t timed_cycles;
+    /// Latency measured by the output stage from the simulated timestamps (steady state), seconds.
+    double latency_min, latency_mean, latency_max;
 } MBSimResult;
 
 MBSimConfig mb_sim_default_config(void);

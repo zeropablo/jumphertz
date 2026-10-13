@@ -21,8 +21,13 @@ public protocol MicPermissionProviding: AnyObject {
     func request(_ completion: @escaping (MicPermission) -> Void)
 }
 
-/// Decides whether the bridge should run and keeps it in that state, recovering from device, sample rate
-/// and power changes. Main thread only.
+/// Runs the two legs of the bridge and keeps them matching the hardware. Main thread only.
+///
+/// - The output leg (MicBridge's IOProc on BlackHole) lives as long as Discord runs. The output device's format
+///   is never written while Discord runs: Discord loses its input when it changes during a call. Its rate is
+///   set to 48 kHz only while Discord is not running.
+/// - The input leg (IOProc on the Scarlett) is rebuilt on its own when the interface changes (rate, hot plug,
+///   wake); meanwhile the output leg keeps running and writes silence.
 public final class BridgeController {
     public enum State: String, Codable, Sendable {
         /// Enabled, Discord not running: nothing allocated, no audio thread, no timer.
@@ -32,6 +37,7 @@ public final class BridgeController {
         case suspended
         case waitingForPermission
         case permissionDenied
+        /// Output device or interface missing (the output leg keeps running if only the interface is missing).
         case waitingForDevices
         case running
         /// Start failed; retried with backoff.
@@ -40,20 +46,45 @@ public final class BridgeController {
 
     public struct Recovery: Codable, Equatable, Sendable {
         public var reason: String
-        /// From the first hardware event to the bridge running again.
+        /// From the first hardware event to both legs running again.
         public var milliseconds: Int
         public var at: Date
     }
 
-    /// Hardware notifications often come in bursts (a rate switch changes several properties, a hot plug
-    /// several devices): wait for the burst to settle before checking.
+    /// Cumulated since the agent started (they survive leg rebuilds).
+    public struct Counters: Codable, Equatable, Sendable {
+        public var underruns: UInt64 = 0
+        public var overflows: UInt64 = 0
+        public var droppedSamples: UInt64 = 0
+        public var overloads: UInt64 = 0
+        public var inputRebuilds = 0
+        public var outputRebuilds = 0
+        /// Must stay 0: each one may have cost Discord its input.
+        public var outputFormatChangesWhileDiscordRunning = 0
+        /// Since the current input leg started (i.e. after its convergence).
+        public var underrunsSinceInputStart: UInt64 = 0
+        public var overflowsSinceInputStart: UInt64 = 0
+    }
+
+    /// Latency measured from the HAL timestamps over the last status window.
+    public struct LatencyWindow: Codable, Equatable, Sendable {
+        public var meanMs: Double
+        public var minMs: Double
+        public var maxMs: Double
+        public var samples: UInt64
+    }
+
+    public static let standardOutputRate: Double = 48000
+    /// Hardware notifications often come in bursts: wait for the burst to settle before checking.
     public static let debounceInterval: TimeInterval = 0.5
     /// Delays between attempts after a failed start; the last one repeats.
     public static let retryDelays: [TimeInterval] = [0.5, 1, 2, 4, 8, 15, 30]
-    /// The IO watchdog checks the cycle counter at this interval while the bridge runs...
-    public static let watchdogInterval: TimeInterval = 1
-    /// ...and rebuilds after this many consecutive checks without progress.
+    /// While the output leg runs: watchdog / statistics tick...
+    public static let tickInterval: TimeInterval = 1
+    /// ...IO is considered stalled after this many ticks without cycles...
     public static let watchdogStrikes = 2
+    /// ...and the status is published every this many ticks.
+    public static let statusEveryTicks = 5
 
     public private(set) var state: State = .idle
     public private(set) var message: String?
@@ -61,30 +92,36 @@ public final class BridgeController {
     public private(set) var discordApps: Set<String> = []
     public private(set) var config: Config
     public private(set) var suspended = false
-    public private(set) var rebuildCount = 0
-    public private(set) var overloadCount = 0
+    public private(set) var counters = Counters()
     public private(set) var lastRecovery: Recovery?
-    public var bridge: AudioBridge? { activeBridge }
+    public private(set) var latency: LatencyWindow?
+    public private(set) var output: OutputLeg?
+    public private(set) var input: InputLeg?
 
-    /// Called after every state evaluation.
+    /// Called after every state evaluation and periodically while bridging.
     public var onChange: ((BridgeController) -> Void)?
 
     private let system: AudioSystem
     private let permission: MicPermissionProviding
     private let scheduler: Scheduler
-    private var activeBridge: AudioBridge?
     private var permissionRequestInFlight = false
 
-    // Debounced health check: reason and time of the first event of the burst.
     private var pendingCheck: Cancellable?
     private var pendingEvent: (reason: String, at: Date)?
-    // Start attempt triggered by a hardware event; used to measure the recovery time.
     private var disruption: (reason: String, at: Date)?
     private var retryWork: Cancellable?
     private var retryAttempt = 0
-    private var watchdogWork: Cancellable?
-    private var watchdogLastCycles: UInt64 = 0
-    private var watchdogMisses = 0
+    private var tickWork: Cancellable?
+    private var ticks = 0
+    private var lastOutputCycles: UInt64 = 0
+    private var lastInputCycles: UInt64 = 0
+    private var outputMisses = 0
+    private var inputMisses = 0
+    // Baselines of the legs' own counters (reset when a leg is recreated).
+    private var seenUnderruns: UInt64 = 0
+    private var seenOverflows: UInt64 = 0
+    private var seenDropped: UInt64 = 0
+    private var outputWarnings: [String] = []
 
     public init(system: AudioSystem, permission: MicPermissionProviding, config: Config,
                 scheduler: Scheduler = MainQueueScheduler()) {
@@ -100,35 +137,36 @@ public final class BridgeController {
 
     public func setDiscordApps(_ apps: Set<String>) {
         guard apps != discordApps else { return }
+        let before = discordApps
         discordApps = apps
-        Log.controller.info("Discord running: \(apps.sorted().joined(separator: ", "), privacy: .public)")
+        for app in apps.subtracting(before).sorted() { Log.controller.notice("Discord detected: \(app, privacy: .public)") }
+        for app in before.subtracting(apps).sorted() { Log.controller.notice("Discord quit: \(app, privacy: .public)") }
         reconcile()
     }
 
-    /// Sleep: release the hardware before the system powers it down. Wake: rebuild from scratch, as device
-    /// IDs and clocks may have changed.
+    /// Sleep: release the hardware before the system powers it down. Wake: rebuild from scratch.
     public func setSuspended(_ suspended: Bool) {
         guard suspended != self.suspended else { return }
         self.suspended = suspended
         if suspended {
-            Log.controller.info("System going to sleep")
-            stopBridge(reason: "system sleep")
+            Log.controller.notice("System going to sleep: stopping the bridge")
+            stopLegs(reason: "system sleep")
         } else {
-            Log.controller.info("System woke up")
+            Log.controller.notice("System woke up: rebuilding the bridge")
             disruption = ("wake from sleep", scheduler.now)
         }
         reconcile()
     }
 
-    /// Tears the bridge down and builds it again.
+    /// Tears both legs down and builds them again.
     public func rebuild(reason: String) {
         disruption = (reason, scheduler.now)
-        restart(reason: reason)
+        restartOutput(reason: reason)
     }
 
     public func shutdown() {
         cancelTimers()
-        stopBridge(reason: "shutdown")
+        stopLegs(reason: "shutdown")
         state = .idle
     }
 
@@ -137,18 +175,16 @@ public final class BridgeController {
     public func reconcile() {
         defer { onChange?(self) }
 
-        guard config.enabled else {
-            return park(.disabled, reason: "disabled in config")
-        }
+        guard config.enabled else { return park(.disabled, reason: "disabled in config") }
         guard discordRunning else {
-            return park(.idle, reason: "Discord not running")
+            park(.idle, reason: "Discord not running")
+            ensureStandardOutputRate()
+            return
         }
-        guard !suspended else {
-            return park(.suspended, reason: "system sleep")
-        }
+        guard !suspended else { return park(.suspended, reason: "system sleep") }
 
-        // Never touch the audio device before the permission is settled: while the system prompt is
-        // pending, creating the IOProc blocks inside coreaudiod.
+        // Never touch an audio device before the permission is settled: while the system prompt is
+        // pending, creating an IOProc blocks inside coreaudiod.
         switch permission.status {
         case .granted:
             break
@@ -163,130 +199,256 @@ public final class BridgeController {
             return
         }
 
-        if activeBridge != nil {
+        // The output leg first: it carries Discord's stream, with or without an interface.
+        if output == nil, !startOutput() { return }
+        if input == nil {
+            startInput()
+        } else {
             set(.running)
-            return
         }
-        startBridge()
     }
 
     /// Not supposed to bridge: release everything, including timers.
     private func park(_ state: State, reason: String) {
         cancelTimers()
         disruption = nil
-        stopBridge(reason: reason)
+        stopLegs(reason: reason)
         set(state)
-    }
-
-    private func startBridge() {
-        retryWork?.cancel()
-        retryWork = nil
-        let devices = system.devices()
-        var warnings: [String] = []
-
-        let input: DeviceInfo
-        switch DeviceMatching.selectInput(from: devices.filter(\.isAlive), preferredUID: config.deviceUID) {
-        case let .selected(device, warning):
-            input = device
-            if let warning { warnings.append(warning) }
-        case let .configuredNotFound(uid):
-            return waitForDevices("Configured Scarlett \(uid) is not connected.")
-        case .noneFound:
-            return waitForDevices("No Focusrite Scarlett connected.")
-        }
-
-        let output: DeviceInfo
-        switch DeviceMatching.selectOutput(from: devices.filter(\.isAlive), preferredUID: config.outputDeviceUID) {
-        case let .selected(device): output = device
-        case let .configuredNotFound(uid):
-            return waitForDevices("Configured output device \(uid) is not present.")
-        case .noneFound:
-            return waitForDevices("\(DeviceMatching.defaultOutputName) not found (brew install blackhole-2ch).")
-        }
-
-        for aggregate in DeviceMatching.aggregatesContaining(output.uid, in: system.visibleAggregates()) {
-            let warning = DeviceMatching.feedbackWarning(outputName: output.name, aggregate: aggregate)
-            Log.controller.warning("\(warning, privacy: .public)")
-            warnings.append(warning)
-        }
-        if let frames = config.bufferFrames {
-            warnings.append("bufferFrames = \(frames): \(input.name) uses this buffer size for every app while the bridge runs.")
-        }
-
-        let bridge = system.makeBridge(input: input, output: output, inputChannel: config.inputChannel,
-                                       gainDb: config.gainDb, bufferFrames: config.bufferFrames)
-        bridge.onEvent = { [weak self] event in self?.handle(event) }
-        do {
-            try bridge.start()
-        } catch {
-            Log.controller.error("Bridge start failed: \(String(describing: error), privacy: .public)")
-            set(.error, String(describing: error))
-            scheduleRetry()
-            return
-        }
-
-        activeBridge = bridge
-        retryAttempt = 0
-        set(.running)
-        self.warnings = warnings
-        startWatchdog()
-
-        if let disruption {
-            let ms = Int((scheduler.now.timeIntervalSince(disruption.at) * 1000).rounded())
-            lastRecovery = Recovery(reason: disruption.reason, milliseconds: ms, at: scheduler.now)
-            Log.controller.info("Recovered from \(disruption.reason, privacy: .public) in \(ms) ms")
-            self.disruption = nil
-        }
-    }
-
-    private func waitForDevices(_ message: String) {
-        // Device list notifications will trigger the next attempt; no timer needed.
-        set(.waitingForDevices, message)
-    }
-
-    private func stopBridge(reason: String) {
-        stopWatchdog()
-        guard let bridge = activeBridge else { return }
-        Log.controller.info("Stopping bridge: \(reason, privacy: .public)")
-        bridge.onEvent = nil
-        bridge.stop()
-        activeBridge = nil
-        warnings = []
-    }
-
-    private func restart(reason: String) {
-        rebuildCount += 1
-        Log.controller.info("Rebuilding bridge: \(reason, privacy: .public)")
-        stopBridge(reason: reason)
-        reconcile()
     }
 
     private var shouldBridge: Bool {
         config.enabled && discordRunning && !suspended && permission.status == .granted
     }
 
+    /// With Discord not running, put the output device back to the standard rate so that the next call
+    /// starts at 48 kHz. Never while Discord runs.
+    private func ensureStandardOutputRate() {
+        guard !discordRunning,
+              case let .selected(device) = DeviceMatching.selectOutput(from: system.devices().filter(\.isAlive),
+                                                                       preferredUID: config.outputDeviceUID),
+              device.sampleRate != Self.standardOutputRate else { return }
+        do {
+            try system.setNominalSampleRate(Self.standardOutputRate, of: device)
+            Log.controller.notice("Set \(device.name, privacy: .public) to \(Int(Self.standardOutputRate)) Hz (was \(Int(device.sampleRate)) Hz; Discord not running)")
+        } catch {
+            Log.controller.error("Cannot set \(device.name, privacy: .public) to \(Int(Self.standardOutputRate)) Hz: \(String(describing: error), privacy: .public)")
+        }
+    }
+
+    // MARK: - Legs
+
+    /// Returns false when the output leg could not run (state set accordingly).
+    private func startOutput() -> Bool {
+        retryWork?.cancel()
+        retryWork = nil
+        let devices = system.devices().filter(\.isAlive)
+        let device: DeviceInfo
+        switch DeviceMatching.selectOutput(from: devices, preferredUID: config.outputDeviceUID) {
+        case let .selected(found): device = found
+        case let .configuredNotFound(uid):
+            waitForDevices("Configured output device \(uid) is not present.")
+            return false
+        case .noneFound:
+            waitForDevices("\(DeviceMatching.defaultOutputName) not found (brew install blackhole-2ch).")
+            return false
+        }
+
+        var warnings: [String] = []
+        for aggregate in DeviceMatching.aggregatesContaining(device.uid, in: system.visibleAggregates()) {
+            let warning = DeviceMatching.feedbackWarning(outputName: device.name, aggregate: aggregate)
+            Log.controller.warning("\(warning, privacy: .public)")
+            warnings.append(warning)
+        }
+        if device.sampleRate != Self.standardOutputRate {
+            let warning = "\(device.name) runs at \(Int(device.sampleRate)) Hz (Discord was already running): left as is, resampling to it."
+            Log.controller.notice("\(warning, privacy: .public)")
+            warnings.append(warning)
+        }
+        if let frames = config.outputBufferFrames {
+            warnings.append("Latency lever: outputBufferFrames = \(frames) on \(device.name).")
+        }
+        if config.reducedLatencyMargin { warnings.append("Latency lever: reducedLatencyMargin on.") }
+
+        let leg = system.makeOutputLeg(device: device, options: config.outputOptions)
+        leg.onEvent = { [weak self] event in self?.handle(event) }
+        do {
+            try leg.start()
+        } catch {
+            Log.controller.error("Output leg start failed: \(String(describing: error), privacy: .public)")
+            set(.error, String(describing: error))
+            scheduleRetry()
+            return false
+        }
+        output = leg
+        outputWarnings = warnings
+        seenUnderruns = 0
+        seenOverflows = 0
+        lastOutputCycles = 0
+        outputMisses = 0
+        startTicking()
+        return true
+    }
+
+    private func startInput() {
+        guard let output else { return }
+        retryWork?.cancel()
+        retryWork = nil
+        let devices = system.devices().filter(\.isAlive)
+        var warnings = outputWarnings
+
+        let device: DeviceInfo
+        switch DeviceMatching.selectInput(from: devices, preferredUID: config.deviceUID) {
+        case let .selected(found, warning):
+            device = found
+            if let warning { warnings.append(warning) }
+        case let .configuredNotFound(uid):
+            return waitForDevices("Configured Scarlett \(uid) is not connected (\(output.device.name) stream kept alive).")
+        case .noneFound:
+            return waitForDevices("No Focusrite Scarlett connected (\(output.device.name) stream kept alive).")
+        }
+        if let frames = config.bufferFrames {
+            warnings.append("bufferFrames = \(frames): \(device.name) uses this buffer size for every app while the bridge runs.")
+        }
+
+        let leg = system.makeInputLeg(device: device, inputChannel: config.inputChannel, gainDb: config.gainDb,
+                                      bufferFrames: config.bufferFrames, output: output)
+        leg.onEvent = { [weak self] event in self?.handle(event) }
+        do {
+            try leg.start()
+        } catch {
+            Log.controller.error("Input leg start failed: \(String(describing: error), privacy: .public)")
+            set(.error, String(describing: error))
+            scheduleRetry()
+            return
+        }
+        input = leg
+        retryAttempt = 0
+        seenDropped = 0
+        lastInputCycles = 0
+        inputMisses = 0
+        counters.underrunsSinceInputStart = 0
+        counters.overflowsSinceInputStart = 0
+        set(.running)
+        self.warnings = warnings
+        Log.controller.notice("Bridge running: \(device.name, privacy: .public) ch \(self.config.inputChannel) @ \(Int(leg.sampleRate)) Hz → \(output.device.name, privacy: .public) @ \(Int(output.sampleRate)) Hz")
+
+        if let disruption {
+            let ms = Int((scheduler.now.timeIntervalSince(disruption.at) * 1000).rounded())
+            lastRecovery = Recovery(reason: disruption.reason, milliseconds: ms, at: scheduler.now)
+            Log.controller.notice("Recovered from \(disruption.reason, privacy: .public) in \(ms) ms")
+            self.disruption = nil
+        }
+    }
+
+    private func waitForDevices(_ message: String) {
+        // Device list notifications trigger the next attempt; no polling.
+        if state != .waitingForDevices || self.message != message {
+            Log.controller.notice("Waiting for devices: \(message, privacy: .public)")
+        }
+        set(.waitingForDevices, message)
+        warnings = outputWarnings
+    }
+
+    private func stopInput(reason: String) {
+        guard let leg = input else { return }
+        accumulateStats()
+        Log.controller.notice("Stopping input leg: \(reason, privacy: .public)")
+        leg.onEvent = nil
+        leg.stop()
+        input = nil
+    }
+
+    private func stopLegs(reason: String) {
+        stopInput(reason: reason)
+        stopTicking()
+        guard let leg = output else { return }
+        accumulateStats()
+        Log.controller.notice("Stopping output leg: \(reason, privacy: .public)")
+        leg.onEvent = nil
+        leg.stop()
+        output = nil
+        outputWarnings = []
+        warnings = []
+        latency = nil
+    }
+
+    private func restartInput(reason: String) {
+        counters.inputRebuilds += 1
+        Log.controller.notice("Rebuilding input leg: \(reason, privacy: .public)")
+        stopInput(reason: reason)
+        reconcile()
+    }
+
+    private func restartOutput(reason: String) {
+        counters.outputRebuilds += 1
+        Log.controller.notice("Rebuilding output leg: \(reason, privacy: .public)")
+        stopLegs(reason: reason)
+        reconcile()
+    }
+
     // MARK: - Hardware events
 
     private func handle(_ event: BridgeEvent) {
         switch event {
-        case .overload:
-            overloadCount += 1
-            Log.controller.warning("IO overload #\(self.overloadCount)")
-            onChange?(self)
-        case let .sampleRateChanged(device, rate):
-            noteEvent("\(device) sample rate changed to \(Int(rate)) Hz")
-        case let .deviceDied(device):
-            noteEvent("\(device) disconnected")
+        case let .overload(uid):
+            counters.overloads += 1
+            Log.controller.notice("IO overload on \(self.name(of: uid), privacy: .public) (#\(self.counters.overloads))")
+        case let .sampleRateChanged(uid, rate):
+            noteEvent("\(name(of: uid)) sample rate changed to \(Int(rate)) Hz")
+        case let .formatChanged(uid):
+            noteEvent("\(name(of: uid)) channel layout changed")
+        case let .deviceDied(uid):
+            noteEvent("\(name(of: uid)) disconnected")
         }
+    }
+
+    private func name(of uid: String) -> String {
+        if output?.device.uid == uid { return output!.device.name }
+        if input?.device.uid == uid { return input!.device.name }
+        return uid
     }
 
     /// Debounces bursts of notifications into one health check.
     private func noteEvent(_ reason: String) {
-        // Nothing to protect while parked; the next reconcile reads the current devices anyway.
         guard shouldBridge else { return }
         if pendingEvent == nil { pendingEvent = (reason, scheduler.now) }
         pendingCheck?.cancel()
         pendingCheck = scheduler.schedule(after: Self.debounceInterval) { [weak self] in self?.healthCheck() }
+    }
+
+    enum DeviceProblem: Equatable {
+        case gone
+        case reconnected
+        case rateChanged(from: Double, to: Double)
+        case layoutChanged
+
+        func describe(_ name: String) -> String {
+            switch self {
+            case .gone: return "\(name) disconnected"
+            case .reconnected: return "\(name) reconnected"
+            case let .rateChanged(from, to): return "\(name) sample rate \(Int(from)) → \(Int(to)) Hz"
+            case .layoutChanged: return "\(name) channel layout changed"
+            }
+        }
+
+        /// The device is still there but no longer presents the same format.
+        var isFormatChange: Bool {
+            switch self {
+            case .rateChanged, .layoutChanged: return true
+            case .gone, .reconnected: return false
+            }
+        }
+    }
+
+    /// Why a leg no longer matches its device, if it does not.
+    static func problem(device: DeviceInfo, rate: Double, output: Bool, devices: [DeviceInfo]) -> DeviceProblem? {
+        guard let current = devices.first(where: { $0.uid == device.uid }), current.isAlive else { return .gone }
+        // Same UID, new object: unplugged and plugged back within the debounce window.
+        if current.id != device.id { return .reconnected }
+        if current.sampleRate != rate { return .rateChanged(from: rate, to: current.sampleRate) }
+        let channels = output ? (current.outputChannels, device.outputChannels) : (current.inputChannels, device.inputChannels)
+        if channels.0 != channels.1 { return .layoutChanged }
+        return nil
     }
 
     private func healthCheck() {
@@ -294,47 +456,48 @@ public final class BridgeController {
         guard let event = pendingEvent else { return }
         pendingEvent = nil
         guard shouldBridge else { return reconcile() }
+        let devices = system.devices()
 
-        guard let bridge = activeBridge else {
-            // Waiting for devices or in error: try now rather than waiting for the retry timer.
+        guard let output else {
+            // Waiting for the output device or in error: try now rather than at the next retry.
+            disruption = disruption ?? event
+            return reconcile()
+        }
+        if let problem = Self.problem(device: output.device, rate: output.sampleRate, output: true, devices: devices) {
+            let reason = problem.describe(output.device.name)
+            if problem.isFormatChange, discordRunning {
+                counters.outputFormatChangesWhileDiscordRunning += 1
+                Log.controller.error("\(output.device.name, privacy: .public) format changed while Discord is running (\(reason, privacy: .public)); MicBridge did not change it. Discord may have lost its input: leave and rejoin the voice channel.")
+            }
+            disruption = (reason, event.at)
+            return restartOutput(reason: reason)
+        }
+
+        guard let input else {
             if state == .waitingForDevices || state == .error {
-                // While devices were missing, the clock restarts when they come back: the time the user
-                // left the interface unplugged is not part of the recovery time.
+                // While the interface was missing, the clock restarts when it comes back: the time it stayed
+                // unplugged is not part of the recovery time.
                 disruption = state == .waitingForDevices
                     ? (disruption?.reason ?? event.reason, event.at)
                     : disruption ?? event
-                startBridge()
+                startInput()
                 onChange?(self)
             }
             return
         }
-        if let problem = Self.problem(with: bridge, devices: system.devices()) {
-            disruption = (problem, event.at)
-            restart(reason: problem)
+        if let problem = Self.problem(device: input.device, rate: input.sampleRate, output: false, devices: devices) {
+            let reason = problem.describe(input.device.name)
+            disruption = (reason, event.at)
+            restartInput(reason: reason)
         }
     }
 
-    /// Why the running bridge no longer matches the hardware, if it does not.
-    static func problem(with bridge: AudioBridge, devices: [DeviceInfo]) -> String? {
-        for (role, expected) in [("input", bridge.input), ("output", bridge.output)] {
-            guard let current = devices.first(where: { $0.uid == expected.uid }), current.isAlive else {
-                return "\(expected.name) (\(role)) disconnected"
-            }
-            // Same UID, new object: unplugged and plugged back within the debounce window.
-            if current.id != expected.id { return "\(expected.name) (\(role)) reconnected" }
-            if current.sampleRate != bridge.sampleRate {
-                return "\(expected.name) sample rate \(Int(bridge.sampleRate)) → \(Int(current.sampleRate)) Hz"
-            }
-        }
-        return nil
-    }
-
-    // MARK: - Retry and watchdog
+    // MARK: - Retry, watchdog, statistics
 
     private func scheduleRetry() {
         let delay = Self.retryDelays[min(retryAttempt, Self.retryDelays.count - 1)]
         retryAttempt += 1
-        Log.controller.info("Retrying in \(delay, format: .fixed(precision: 1)) s (attempt \(self.retryAttempt))")
+        Log.controller.notice("Retrying in \(delay, format: .fixed(precision: 1)) s (attempt \(self.retryAttempt))")
         retryWork?.cancel()
         retryWork = scheduler.schedule(after: delay) { [weak self] in
             guard let self else { return }
@@ -343,39 +506,90 @@ public final class BridgeController {
         }
     }
 
-    /// Catches an IOProc that stops being called without any notification (e.g. a clock lost after wake).
-    private func startWatchdog() {
-        stopWatchdog()
-        watchdogLastCycles = activeBridge?.cycleCount ?? 0
-        watchdogMisses = 0
-        scheduleWatchdog()
+    private func startTicking() {
+        stopTicking()
+        ticks = 0
+        tickWork = scheduler.schedule(after: Self.tickInterval) { [weak self] in self?.tick() }
     }
 
-    private func scheduleWatchdog() {
-        watchdogWork = scheduler.schedule(after: Self.watchdogInterval) { [weak self] in self?.watchdogTick() }
+    private func stopTicking() {
+        tickWork?.cancel()
+        tickWork = nil
     }
 
-    private func watchdogTick() {
-        guard let bridge = activeBridge else { return }
-        let cycles = bridge.cycleCount
-        if cycles == watchdogLastCycles {
-            watchdogMisses += 1
-            if watchdogMisses >= Self.watchdogStrikes {
-                let stalled = Double(watchdogMisses) * Self.watchdogInterval
-                disruption = ("IO stalled", scheduler.now.addingTimeInterval(-stalled))
-                restart(reason: "IO stalled for \(Int(stalled)) s")
-                return
-            }
-        } else {
-            watchdogMisses = 0
+    /// Once per second while the output leg runs: IO watchdog for both legs, counters, periodic status.
+    private func tick() {
+        tickWork = nil
+        guard let output else { return }
+        ticks += 1
+
+        let outputCycles = output.stats.cycles
+        outputMisses = outputCycles == lastOutputCycles ? outputMisses + 1 : 0
+        lastOutputCycles = outputCycles
+        if outputMisses >= Self.watchdogStrikes {
+            let stalled = Double(outputMisses) * Self.tickInterval
+            disruption = ("\(output.device.name) IO stalled", scheduler.now.addingTimeInterval(-stalled))
+            return restartOutput(reason: "\(output.device.name) IO stalled for \(Int(stalled)) s")
         }
-        watchdogLastCycles = cycles
-        scheduleWatchdog()
+        if let input {
+            let inputCycles = input.cycleCount
+            inputMisses = inputCycles == lastInputCycles ? inputMisses + 1 : 0
+            lastInputCycles = inputCycles
+            if inputMisses >= Self.watchdogStrikes {
+                let stalled = Double(inputMisses) * Self.tickInterval
+                disruption = ("\(input.device.name) IO stalled", scheduler.now.addingTimeInterval(-stalled))
+                return restartInput(reason: "\(input.device.name) IO stalled for \(Int(stalled)) s")
+            }
+        }
+
+        let changed = accumulateStats()
+        if ticks % Self.statusEveryTicks == 0 {
+            let stats = output.stats
+            latency = stats.latencyCount > 0
+                ? LatencyWindow(meanMs: stats.latencyMean * 1000, minMs: stats.latencyMin * 1000,
+                                maxMs: stats.latencyMax * 1000, samples: stats.latencyCount)
+                : nil
+            output.resetLatencyWindow()
+        }
+        if changed || ticks % Self.statusEveryTicks == 0 { onChange?(self) }
+        tickWork = scheduler.schedule(after: Self.tickInterval) { [weak self] in self?.tick() }
     }
 
-    private func stopWatchdog() {
-        watchdogWork?.cancel()
-        watchdogWork = nil
+    /// Folds the legs' counters into the cumulated ones and logs what happened. Returns true if anything did.
+    @discardableResult
+    private func accumulateStats() -> Bool {
+        var changed = false
+        if let output {
+            let stats = output.stats
+            if stats.underruns > seenUnderruns {
+                let delta = stats.underruns - seenUnderruns
+                counters.underruns += delta
+                counters.underrunsSinceInputStart += delta
+                Log.controller.notice("Underrun ×\(delta): the ring ran dry (total \(self.counters.underruns))")
+                changed = true
+            }
+            if stats.overflows > seenOverflows {
+                let delta = stats.overflows - seenOverflows
+                counters.overflows += delta
+                counters.overflowsSinceInputStart += delta
+                Log.controller.notice("Overflow ×\(delta): output stalled, backlog dropped (total \(self.counters.overflows))")
+                changed = true
+            }
+            if stats.resamplerErrors > 0 {
+                Log.controller.error("Resampler errors: \(stats.resamplerErrors)")
+            }
+            seenUnderruns = stats.underruns
+            seenOverflows = stats.overflows
+        }
+        if let input {
+            let dropped = input.droppedSamples
+            if dropped > seenDropped {
+                counters.droppedSamples += dropped - seenDropped
+                changed = true
+            }
+            seenDropped = dropped
+        }
+        return changed
     }
 
     private func cancelTimers() {
@@ -385,7 +599,7 @@ public final class BridgeController {
         retryWork?.cancel()
         retryWork = nil
         retryAttempt = 0
-        stopWatchdog()
+        stopTicking()
     }
 
     // MARK: - Permission
@@ -393,12 +607,12 @@ public final class BridgeController {
     private func requestPermission() {
         guard !permissionRequestInFlight else { return }
         permissionRequestInFlight = true
-        Log.controller.info("Requesting microphone permission")
+        Log.controller.notice("Requesting microphone permission")
         permission.request { [weak self] result in
             let finish = {
                 guard let self else { return }
                 self.permissionRequestInFlight = false
-                Log.controller.info("Microphone permission: \(result.rawValue, privacy: .public)")
+                Log.controller.notice("Microphone permission: \(result.rawValue, privacy: .public)")
                 self.reconcile()
             }
             if Thread.isMainThread { finish() } else { DispatchQueue.main.async(execute: finish) }
@@ -406,12 +620,12 @@ public final class BridgeController {
     }
 
     private func set(_ state: State, _ message: String? = nil) {
-        if state != self.state || message != self.message {
-            if let message { Log.controller.info("State \(state.rawValue, privacy: .public): \(message, privacy: .public)") }
-            else { Log.controller.info("State \(state.rawValue, privacy: .public)") }
+        if state != self.state {
+            if let message { Log.controller.notice("State \(state.rawValue, privacy: .public): \(message, privacy: .public)") }
+            else { Log.controller.notice("State \(state.rawValue, privacy: .public)") }
         }
         self.state = state
         self.message = message
-        if state != .running { warnings = [] }
+        if state != .running && state != .waitingForDevices { warnings = [] }
     }
 }

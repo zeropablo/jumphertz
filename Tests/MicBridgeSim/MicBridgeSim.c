@@ -29,6 +29,9 @@ static uint32_t lcg(uint32_t *state) {
 
 static double uniform(uint32_t *state) { return (lcg(state) >> 8) / 16777216.0 - 0.5; }
 
+/// Simulated host clock offset: real mHostTime values are never close to 0 (0 means "unknown" in the stages).
+#define HOST_EPOCH 1000.0
+
 static int in_window(double t, double at, double length) { return length > 0 && t >= at && t < at + length; }
 
 int mb_sim_run(const MBSimConfig *c, MBSimResult *r) {
@@ -60,7 +63,7 @@ int mb_sim_run(const MBSimConfig *c, MBSimResult *r) {
     uint64_t in_sample = 0;                  // samples produced since the input clock (re)started
     double phase_origin = 0;                 // tone phase at in_origin
     double in_jit = uniform(&seed) * c->jitter, out_jit = uniform(&seed) * c->jitter;
-    int rate_changed = 0, input_stopped_for_change = 0;
+    int rate_changed = 0, input_stopped_for_change = 0, latency_reset = 0;
 
     float last = 0;
     int have_last = 0;
@@ -117,8 +120,11 @@ int mb_sim_run(const MBSimConfig *c, MBSimResult *r) {
                     double tt = (double)(in_sample + i) / in_true;
                     in_block[i] = (float)(c->amplitude * sin(phase_origin + 2 * M_PI * c->tone_hz * tt));
                 }
-                double ideal = in_origin + in_k * in_period;      // HAL timestamps are ideal cycle times
-                mb_input_process(input, in_block, 1, c->input_block, in_scalar, ideal);
+                // HAL timestamps are ideal cycle times on a host clock that is far from 0.
+                double ideal = HOST_EPOCH + in_origin + in_k * in_period;
+                // The block was captured during the period that ends at this cycle.
+                double captured = ideal - c->input_block / in_true;
+                mb_input_process(input, in_block, 1, c->input_block, in_scalar, ideal, captured);
                 produced_total += c->input_block;
                 r->input_frames += c->input_block;
             }
@@ -130,7 +136,13 @@ int mb_sim_run(const MBSimConfig *c, MBSimResult *r) {
 
             float *dst[1] = {out_block};
             uint32_t stride[1] = {1};
-            mb_output_process(output, dst, stride, 1, c->output_block, out_scalar, out_k * out_period);
+            // Written now, presented one block later.
+            double ideal = HOST_EPOCH + out_k * out_period;
+            mb_output_process(output, dst, stride, 1, c->output_block, out_scalar, ideal, ideal + out_period);
+            if (!latency_reset && t >= c->settle_seconds) {
+                mb_output_reset_latency(output);
+                latency_reset = 1;
+            }
             MBOutputStats st;
             mb_output_get_stats(output, &st);
             int running = st.state == MBOutputStateRunning;
@@ -200,6 +212,9 @@ int mb_sim_run(const MBSimConfig *c, MBSimResult *r) {
         r->fill_slope_ppm = slope / in_true * 1e6;
     }
     r->timed_cycles = st.timed_cycles;
+    r->latency_min = st.latency_min;
+    r->latency_mean = st.latency_mean;
+    r->latency_max = st.latency_max;
     (void)steady_in_start;
     (void)steady_out_start;
     (void)steady_fill_start;

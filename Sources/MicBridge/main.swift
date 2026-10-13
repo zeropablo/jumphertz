@@ -1,7 +1,7 @@
 import Foundation
 import MicBridgeCore
 
-let version = "0.3.0"
+let version = "0.4.0"
 
 let usage = """
     MicBridge \(version) — routes a Focusrite Scarlett input to BlackHole for Discord.

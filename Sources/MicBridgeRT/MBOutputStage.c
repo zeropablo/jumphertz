@@ -54,6 +54,13 @@ struct MBOutputStage {
     _Atomic uint64_t stat_overflows;
     _Atomic uint64_t stat_errors;
     _Atomic uint32_t stat_converter;
+    // Latency window: IO thread accumulates, control thread requests resets.
+    _Atomic uint64_t latency_reset_request;
+    uint64_t latency_reset_seen;
+    double lat_min, lat_max, lat_sum;
+    uint64_t lat_count;
+    _Atomic uint64_t stat_lat_last_bits, stat_lat_min_bits, stat_lat_max_bits, stat_lat_mean_bits;
+    _Atomic uint64_t stat_lat_count;
 };
 
 static inline uint64_t d2b(double d) { uint64_t u; memcpy(&u, &d, sizeof u); return u; }
@@ -67,9 +74,17 @@ MBOutputTuning mb_output_default_tuning(void) {
         .max_correction = 5e-4,    // ±500 ppm
         .fill_filter_seconds = 0.5,
         .margin_seconds = 0.0025,
+        .producer_margin_fraction = 0.25,
         .fade_in_seconds = 0.005,
         .fade_out_seconds = 0.002,
     };
+    return t;
+}
+
+MBOutputTuning mb_output_reduced_margin_tuning(void) {
+    MBOutputTuning t = mb_output_default_tuning();
+    t.margin_seconds = 0.001;
+    t.producer_margin_fraction = 0.0;
     return t;
 }
 
@@ -108,6 +123,12 @@ MBOutputStage *mb_output_create(MBRing *ring, double output_rate, uint32_t max_f
     atomic_init(&s->stat_overflows, 0);
     atomic_init(&s->stat_errors, 0);
     atomic_init(&s->stat_converter, 0);
+    atomic_init(&s->latency_reset_request, 0);
+    atomic_init(&s->stat_lat_last_bits, d2b(0));
+    atomic_init(&s->stat_lat_min_bits, d2b(0));
+    atomic_init(&s->stat_lat_max_bits, d2b(0));
+    atomic_init(&s->stat_lat_mean_bits, d2b(0));
+    atomic_init(&s->stat_lat_count, 0);
     return s;
 }
 
@@ -141,6 +162,15 @@ void mb_output_get_stats(const MBOutputStage *cs, MBOutputStats *out) {
     out->overflows = atomic_load_explicit(&s->stat_overflows, memory_order_relaxed);
     out->resampler_errors = atomic_load_explicit(&s->stat_errors, memory_order_relaxed);
     out->converter = (int)atomic_load_explicit(&s->stat_converter, memory_order_relaxed);
+    out->latency_last = b2d(atomic_load_explicit(&s->stat_lat_last_bits, memory_order_relaxed));
+    out->latency_min = b2d(atomic_load_explicit(&s->stat_lat_min_bits, memory_order_relaxed));
+    out->latency_max = b2d(atomic_load_explicit(&s->stat_lat_max_bits, memory_order_relaxed));
+    out->latency_mean = b2d(atomic_load_explicit(&s->stat_lat_mean_bits, memory_order_relaxed));
+    out->latency_count = atomic_load_explicit(&s->stat_lat_count, memory_order_relaxed);
+}
+
+void mb_output_reset_latency(MBOutputStage *s) {
+    atomic_fetch_add_explicit(&s->latency_reset_request, 1, memory_order_release);
 }
 
 // MARK: - IO thread
@@ -171,7 +201,7 @@ static uint32_t target_fill(const MBOutputStage *s, uint32_t frames) {
     double consumer = ceil(frames * s->input_rate / s->output_rate);
     double producer = mb_ring_producer_block(s->ring);
     if (producer == 0) producer = consumer;
-    double margin = fmax(64.0, s->tuning.margin_seconds * s->input_rate) + producer / 4.0;
+    double margin = fmax(64.0, s->tuning.margin_seconds * s->input_rate) + producer * s->tuning.producer_margin_fraction;
     double target = producer + consumer + half_filter(s) + margin;
     double limit = mb_ring_capacity(s->ring) / 2.0;
     return (uint32_t)(target < limit ? target : limit);
@@ -284,7 +314,33 @@ static double estimate_fill(const MBOutputStage *s, double host_seconds, double 
     return virtual_write - s->position;
 }
 
-static void process_block(MBOutputStage *s, uint32_t frames, double output_scalar, double host_seconds) {
+/// Latency of the frame about to be written: its presentation time minus the capture time of the input sample
+/// at the filter centre (where the resampler takes it from). Both from the HAL's own timestamps.
+static void measure_latency(MBOutputStage *s, double present_seconds, double in_scalar) {
+    uint64_t request = atomic_load_explicit(&s->latency_reset_request, memory_order_acquire);
+    if (request != s->latency_reset_seen) {
+        s->latency_reset_seen = request;
+        s->lat_count = 0;
+        s->lat_sum = 0;
+    }
+    double origin = mb_ring_capture_origin(s->ring);
+    if (present_seconds <= 0 || origin <= 0) return;
+    double captured = origin + s->position / (s->input_rate * in_scalar);
+    double latency = present_seconds - captured;
+    if (latency <= 0 || latency > 2.0) return;   // timestamps not usable (e.g. right after a restart)
+    if (s->lat_count == 0 || latency < s->lat_min) s->lat_min = latency;
+    if (s->lat_count == 0 || latency > s->lat_max) s->lat_max = latency;
+    s->lat_sum += latency;
+    s->lat_count++;
+    atomic_store_explicit(&s->stat_lat_last_bits, d2b(latency), memory_order_relaxed);
+    atomic_store_explicit(&s->stat_lat_min_bits, d2b(s->lat_min), memory_order_relaxed);
+    atomic_store_explicit(&s->stat_lat_max_bits, d2b(s->lat_max), memory_order_relaxed);
+    atomic_store_explicit(&s->stat_lat_mean_bits, d2b(s->lat_sum / (double)s->lat_count), memory_order_relaxed);
+    atomic_store_explicit(&s->stat_lat_count, s->lat_count, memory_order_relaxed);
+}
+
+static void process_block(MBOutputStage *s, uint32_t frames, double output_scalar, double host_seconds,
+                          double present_seconds) {
     float *out = s->scratch;
     uint64_t epoch = atomic_load_explicit(&s->requested_epoch, memory_order_acquire);
     if (epoch != s->epoch) apply_epoch(s, epoch);
@@ -358,6 +414,7 @@ static void process_block(MBOutputStage *s, uint32_t frames, double output_scala
             double out_scalar = valid_scalar(output_scalar);
             double ratio = (s->output_rate * out_scalar) / (s->input_rate * in_scalar) * (1.0 - correction);
 
+            measure_latency(s, present_seconds, in_scalar);
             uint32_t produced = resample(s, frames, ratio);
             if (produced < frames) {
                 // Not expected after the check above; degrade gracefully.
@@ -389,7 +446,7 @@ static void process_block(MBOutputStage *s, uint32_t frames, double output_scala
 }
 
 void mb_output_process(MBOutputStage *s, float *const *destinations, const uint32_t *strides, uint32_t count_dst,
-                       uint32_t frames, double output_scalar, double host_seconds) {
+                       uint32_t frames, double output_scalar, double host_seconds, double present_seconds) {
     atomic_fetch_add_explicit(&s->stat_cycles, 1, memory_order_relaxed);
     uint32_t offset = 0;
     while (offset < frames) {
@@ -397,7 +454,8 @@ void mb_output_process(MBOutputStage *s, float *const *destinations, const uint3
         if (n > s->max_frames) n = s->max_frames;
         // Later chunks of a split block happen later in the stream.
         double chunk_time = host_seconds > 0 ? host_seconds + offset / s->output_rate : 0;
-        process_block(s, n, output_scalar, chunk_time);
+        double chunk_present = present_seconds > 0 ? present_seconds + offset / s->output_rate : 0;
+        process_block(s, n, output_scalar, chunk_time, chunk_present);
         for (uint32_t d = 0; d < count_dst; d++) {
             float *dst = destinations[d] + (size_t)offset * strides[d];
             uint32_t stride = strides[d];

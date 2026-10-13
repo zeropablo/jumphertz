@@ -49,10 +49,17 @@ void mb_input_set_gain(MBInputStage *s, float gain) {
 
 // Real-time rules: no allocation, no locks, no Objective-C/Swift, no logging, no syscalls.
 void mb_input_process(MBInputStage *s, const float *samples, uint32_t stride, uint32_t frames, double rate_scalar,
-                      double host_seconds) {
+                      double host_seconds, double capture_seconds) {
     atomic_fetch_add_explicit(&s->cycles, 1, memory_order_relaxed);
     atomic_store_explicit(&s->last_frames, frames, memory_order_relaxed);
     if (frames == 0 || stride == 0) return;
+
+    double scalar = (rate_scalar > 0.99 && rate_scalar < 1.01) ? rate_scalar : 1.0;
+    if (capture_seconds > 0) {
+        // Index of this block's first frame ↔ its capture time.
+        double first_index = (double)mb_ring_write_index(s->ring);
+        mb_ring_publish_capture_origin(s->ring, capture_seconds - first_index / (s->input_rate * scalar));
+    }
 
     float *first, *second;
     uint32_t n1, n2;
@@ -84,7 +91,6 @@ void mb_input_process(MBInputStage *s, const float *samples, uint32_t stride, ui
     }
     s->current_gain = target;
     mb_ring_commit(s->ring, writable);
-    double scalar = (rate_scalar > 0.99 && rate_scalar < 1.01) ? rate_scalar : 1.0;
     mb_ring_publish_block(s->ring, frames, rate_scalar, host_seconds, s->input_rate * scalar);
 
     if (writable < frames) {

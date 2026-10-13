@@ -18,30 +18,32 @@ struct BridgeControllerTests {
         let (controller, system, _) = make()
         controller.reconcile()
         #expect(controller.state == .idle)
-        #expect(system.bridges.isEmpty)
+        #expect(system.outputs.isEmpty && system.inputs.isEmpty)
     }
 
-    @Test func discordLaunchStartsAndQuitStopsBridge() throws {
+    @Test func discordLaunchStartsBothLegsAndQuitStopsThem() throws {
         let (controller, system, _) = make()
         controller.setDiscordApps(["com.hnc.Discord"])
         #expect(controller.state == .running)
-        let bridge = try #require(system.bridges.first)
-        #expect(bridge.started && bridge.input == scarlett && bridge.output == blackHole)
+        let output = try #require(system.liveOutputs.first)
+        let input = try #require(system.liveInputs.first)
+        #expect(output.device == blackHole && input.device == scarlett)
+        #expect(output.inputRates == [48000])
 
         controller.setDiscordApps([])
         #expect(controller.state == .idle)
-        #expect(bridge.stopped)
-        #expect(controller.bridge == nil)
+        #expect(input.stopped && output.stopped)
+        #expect(controller.output == nil && controller.input == nil)
     }
 
-    @Test func secondDiscordVariantKeepsSingleBridge() {
+    @Test func secondDiscordVariantKeepsTheLegs() {
         let (controller, system, _) = make()
         controller.setDiscordApps(["com.hnc.Discord"])
         controller.setDiscordApps(["com.hnc.Discord", "com.hnc.DiscordPTB"])
-        #expect(system.bridges.count == 1)
         controller.setDiscordApps(["com.hnc.DiscordPTB"])
         #expect(controller.state == .running)
-        #expect(system.bridges.count == 1 && !system.bridges[0].stopped)
+        #expect(system.outputs.count == 1 && system.inputs.count == 1)
+        #expect(system.liveOutputs.count == 1)
     }
 
     @Test func disabledConfigNeverBridges() {
@@ -50,7 +52,7 @@ struct BridgeControllerTests {
         let (controller, system, _) = make(config: config)
         controller.setDiscordApps(["com.hnc.Discord"])
         #expect(controller.state == .disabled)
-        #expect(system.bridges.isEmpty)
+        #expect(system.outputs.isEmpty)
     }
 
     @Test func permissionRequestedBeforeTouchingAudio() {
@@ -58,39 +60,45 @@ struct BridgeControllerTests {
         controller.setDiscordApps(["com.hnc.Discord"])
         #expect(controller.state == .waitingForPermission)
         #expect(permission.requests == 1)
-        #expect(system.bridges.isEmpty)
+        #expect(system.outputs.isEmpty)
 
         controller.reconcile()   // no duplicate prompt while one is pending
         #expect(permission.requests == 1)
 
         permission.answer(.granted)
         #expect(controller.state == .running)
-        #expect(system.bridges.count == 1)
     }
 
-    @Test func deniedPermissionStaysIdleWithoutBridge() {
+    @Test func deniedPermissionStaysIdleWithoutLegs() {
         let (controller, system, _) = make(permission: .denied)
         controller.setDiscordApps(["com.hnc.Discord"])
         #expect(controller.state == .permissionDenied)
-        #expect(system.bridges.isEmpty)
+        #expect(system.outputs.isEmpty)
     }
 
-    @Test func missingDevicesWait() {
-        let (controller, _, _) = make(devices: [blackHole])
+    @Test func missingBlackHoleWaitsWithoutLegs() {
+        let (controller, system, _) = make(devices: [scarlett])
         controller.setDiscordApps(["com.hnc.Discord"])
         #expect(controller.state == .waitingForDevices)
-
-        let (controller2, _, _) = make(devices: [scarlett])
-        controller2.setDiscordApps(["com.hnc.Discord"])
-        #expect(controller2.state == .waitingForDevices)
+        #expect(system.outputs.isEmpty)
     }
 
-    @Test func startFailureReportsError() {
+    /// Without an interface, Discord still gets an uninterrupted (silent) BlackHole stream.
+    @Test func missingScarlettKeepsTheOutputRunning() {
+        let (controller, system, _) = make(devices: [blackHole])
+        controller.setDiscordApps(["com.hnc.Discord"])
+        #expect(controller.state == .waitingForDevices)
+        #expect(system.liveOutputs.count == 1)
+        #expect(system.inputs.isEmpty)
+    }
+
+    @Test func inputStartFailureKeepsTheOutputRunning() {
         let (controller, system, _) = make()
-        system.failingStarts = 1
+        system.failingInputStarts = 1
         controller.setDiscordApps(["com.hnc.Discord"])
         #expect(controller.state == .error)
-        #expect(controller.bridge == nil)
+        #expect(system.liveOutputs.count == 1)
+        #expect(controller.input == nil)
     }
 
     @Test func feedbackWarningExposed() {
@@ -98,8 +106,35 @@ struct BridgeControllerTests {
         system.aggregates = [AggregateInfo(uid: "m", name: "Enceintes", isMultiOutput: true,
                                            subDeviceUIDs: ["speakers", blackHole.uid])]
         controller.setDiscordApps(["com.hnc.Discord"])
-        #expect(controller.warnings.count == 1)
-        #expect(controller.warnings[0].contains("Enceintes"))
+        #expect(controller.warnings.contains { $0.contains("Enceintes") })
+    }
+
+    // MARK: Output device rate
+
+    @Test func outputSetTo48kOnlyWhileDiscordIsNotRunning() {
+        var slow = blackHole
+        slow.sampleRate = 44100
+        let (controller, system, _) = make(devices: [scarlett, slow])
+        controller.reconcile()                                      // agent start, no Discord
+        #expect(system.rateChanges.map(\.rate) == [48000])
+        #expect(system.rateChanges.first?.uid == blackHole.uid)
+
+        controller.setDiscordApps(["com.hnc.Discord"])
+        #expect(system.liveOutputs.first?.sampleRate == 48000)
+        #expect(system.rateChanges.count == 1)
+    }
+
+    @Test func outputRateLeftAloneWhenDiscordAlreadyRuns() {
+        var slow = blackHole
+        slow.sampleRate = 44100
+        let (controller, system, _) = make(devices: [scarlett, slow])
+        controller.setDiscordApps(["com.hnc.Discord"])             // Discord already there at agent start
+        #expect(system.rateChanges.isEmpty)
+        #expect(system.liveOutputs.first?.sampleRate == 44100)
+        #expect(controller.warnings.contains { $0.contains("44100 Hz") })
+
+        controller.setDiscordApps([])                               // after the call: back to 48 kHz
+        #expect(system.rateChanges.map(\.rate) == [48000])
     }
 
     @Test func discordBundleIDs() {

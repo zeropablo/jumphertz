@@ -8,10 +8,11 @@ struct ConfigTests {
     @Test func fullConfig() throws {
         let config = try parse("""
             {"deviceUID": "abc", "outputDeviceUID": "BlackHole16ch_UID", "inputChannel": 3, "gainDb": -6.5,
-             "enabled": false, "bufferFrames": 256}
+             "enabled": false, "bufferFrames": 256, "outputBufferFrames": 128, "reducedLatencyMargin": true}
             """)
         #expect(config == Config(deviceUID: "abc", outputDeviceUID: "BlackHole16ch_UID",
-                                 inputChannel: 3, gainDb: -6.5, enabled: false, bufferFrames: 256))
+                                 inputChannel: 3, gainDb: -6.5, enabled: false, bufferFrames: 256,
+                                 outputBufferFrames: 128, reducedLatencyMargin: true))
     }
 
     @Test func missingKeysUseDefaults() throws {
@@ -29,6 +30,8 @@ struct ConfigTests {
         #expect(throws: ConfigError.self) { try parse("not json") }
         #expect(throws: ConfigError.self) { try parse(#"{"bufferFrames": 8}"#) }
         #expect(throws: ConfigError.self) { try parse(#"{"bufferFrames": 8192}"#) }
+        #expect(throws: ConfigError.self) { try parse(#"{"outputBufferFrames": 4}"#) }
+        #expect(throws: ConfigError.self) { try parse(#"{"reducedLatencyMargin": "yes"}"#) }
     }
 
     @Test func roundTripWritesNulls() throws {
@@ -37,6 +40,8 @@ struct ConfigTests {
         #expect(text.contains(#""deviceUID" : null"#))
         #expect(text.contains(#""outputDeviceUID" : null"#))
         #expect(text.contains(#""bufferFrames" : null"#))
+        #expect(text.contains(#""outputBufferFrames" : null"#))
+        #expect(text.contains(#""reducedLatencyMargin" : false"#))
         #expect(try Config.parse(data) == .default)
     }
 

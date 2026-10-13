@@ -55,6 +55,12 @@ double mb_ring_producer_rate_scalar(const MBRing *_Nonnull ring);
 /// index would have been 0 at the producer's rate. Virtual write index at time T = (T - origin) × rate.
 double mb_ring_producer_time(const MBRing *_Nonnull ring);
 double mb_ring_producer_origin(const MBRing *_Nonnull ring);
+/// Capture origin: host time at which sample index 0 would have been captured by the input device, so that
+/// sample i was captured at origin + i / rate. 0 if unknown. Used to measure the bridge's real latency.
+void mb_ring_publish_capture_origin(MBRing *_Nonnull ring, double origin_seconds);
+double mb_ring_capture_origin(const MBRing *_Nonnull ring);
+/// Total samples ever written (write index).
+uint64_t mb_ring_write_index(const MBRing *_Nonnull ring);
 /// Total samples ever consumed (read index).
 uint64_t mb_ring_read_index(const MBRing *_Nonnull ring);
 

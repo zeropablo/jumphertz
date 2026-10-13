@@ -11,6 +11,11 @@ enum TestCommand {
 
     static func run(seconds: Int, channelOverride: Int?, gainOverride: Double?) {
         guard seconds > 0 else { fail("--seconds must be positive") }
+        // Two bridges would both write into BlackHole and the signals would add up.
+        if let agent = StatusStore.live(), agent.bridge != nil {
+            fail("the MicBridge agent (pid \(agent.pid)) is already bridging. Quit Discord or stop the agent first:\n"
+                 + "  launchctl bootout gui/$(id -u)/com.zeropablo.micbridge")
+        }
         let system = CoreAudioSystem()
         var config = DeviceResolution.config()
         if let channelOverride { config.inputChannel = channelOverride }

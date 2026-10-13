@@ -83,7 +83,7 @@ final class CoreAudioBridge: AudioBridge {
         let status = AudioHardwareCreateAggregateDevice(description as CFDictionary, &newID)
         guard status == noErr else { throw BridgeError.hal(HALError(status, "AudioHardwareCreateAggregateDevice")) }
         aggregateID = newID
-        log.info("Created private aggregate \(newID) (\(uid, privacy: .public)) at \(Int(rate)) Hz")
+        Log.audio.info("Created private aggregate \(newID) (\(uid, privacy: .public)) at \(Int(rate)) Hz")
 
         // The HAL finishes assembling sub-devices asynchronously.
         let expectedIn = input.inputChannels
@@ -111,7 +111,7 @@ final class CoreAudioBridge: AudioBridge {
         } catch let error as ChannelMapError {
             throw BridgeError.routing(error)
         }
-        log.debug("Aggregate layout in=\(inLayout, privacy: .public) out=\(outLayout, privacy: .public)")
+        Log.audio.debug("Aggregate layout in=\(inLayout, privacy: .public) out=\(outLayout, privacy: .public)")
 
         guard let ctx = mb_context_create() else { throw BridgeError.allocation }
         context = ctx
@@ -134,9 +134,9 @@ final class CoreAudioBridge: AudioBridge {
         guard startStatus == noErr else { throw BridgeError.hal(HALError(startStatus, "AudioDeviceStart")) }
 
         if let after = try? HAL.nominalSampleRate(input.id), after != rate {
-            log.error("Input interface rate changed during setup (\(Int(rate)) -> \(Int(after)) Hz)")
+            Log.audio.error("Input interface rate changed during setup (\(Int(rate)) -> \(Int(after)) Hz)")
         }
-        log.info("Bridge running: \(self.input.name, privacy: .public) ch \(self.inputChannel) -> \(self.output.name, privacy: .public)")
+        Log.audio.info("Bridge running: \(self.input.name, privacy: .public) ch \(self.inputChannel) -> \(self.output.name, privacy: .public)")
     }
 
     func stop() {
@@ -147,8 +147,8 @@ final class CoreAudioBridge: AudioBridge {
         procID = nil
         if aggregateID != 0 {
             let status = AudioHardwareDestroyAggregateDevice(aggregateID)
-            if status != noErr { log.error("AudioHardwareDestroyAggregateDevice failed: \(status)") }
-            else { log.info("Destroyed private aggregate \(self.aggregateID)") }
+            if status != noErr { Log.audio.error("AudioHardwareDestroyAggregateDevice failed: \(status)") }
+            else { Log.audio.info("Destroyed private aggregate \(self.aggregateID)") }
         }
         aggregateID = 0
         // The IOProc has been destroyed, nothing references the context anymore.
@@ -194,7 +194,7 @@ final class CoreAudioBridge: AudioBridge {
         guard current != rate else { return }
         let supported = HAL.availableSampleRates(output.id).contains { $0.mMinimum <= rate && rate <= $0.mMaximum }
         guard supported else { throw BridgeError.unsupportedSampleRate(rate, output: output.name) }
-        log.info("Setting \(self.output.name, privacy: .public) to \(Int(rate)) Hz (was \(Int(current)) Hz)")
+        Log.audio.info("Setting \(self.output.name, privacy: .public) to \(Int(rate)) Hz (was \(Int(current)) Hz)")
         try wrap { try HAL.set(output.id, HAL.address(kAudioDevicePropertyNominalSampleRate), Float64(rate)) }
         try waitUntil("\(output.name) to switch to \(Int(rate)) Hz") {
             (try? HAL.nominalSampleRate(self.output.id)) == rate
@@ -210,11 +210,11 @@ final class CoreAudioBridge: AudioBridge {
            range.mMaximum > 0 {
             let clamped = UInt32(min(max(Double(frames), range.mMinimum), range.mMaximum))
             if clamped != frames {
-                log.warning("bufferFrames \(requested) outside \(Int(range.mMinimum))...\(Int(range.mMaximum)); using \(clamped)")
+                Log.audio.warning("bufferFrames \(requested) outside \(Int(range.mMinimum))...\(Int(range.mMaximum)); using \(clamped)")
                 frames = clamped
             }
         }
-        log.warning("bufferFrames=\(frames) requested on the aggregate: this also applies to \(self.input.name, privacy: .public) for other apps while the bridge runs")
+        Log.audio.warning("bufferFrames=\(frames) requested on the aggregate: this also applies to \(self.input.name, privacy: .public) for other apps while the bridge runs")
         try wrap { try HAL.set(aggregateID, HAL.address(kAudioDevicePropertyBufferFrameSize), frames) }
     }
 
@@ -229,25 +229,25 @@ final class CoreAudioBridge: AudioBridge {
                 try HAL.set(sub, HAL.address(kAudioSubDevicePropertyDriftCompensationQuality),
                             UInt32(kAudioAggregateDriftCompensationHighQuality))
             } catch {
-                log.error("Cannot enable drift compensation: \(String(describing: error), privacy: .public)")
+                Log.audio.error("Cannot enable drift compensation: \(String(describing: error), privacy: .public)")
             }
             return
         }
-        log.error("Bridge output sub-device not found in aggregate; drift compensation not confirmed")
+        Log.audio.error("Bridge output sub-device not found in aggregate; drift compensation not confirmed")
     }
 
     private func setStreamUsage(_ proc: AudioDeviceIOProcID, input: Bool, enabled: [Bool]) throws {
         let scope = input ? kAudioObjectPropertyScopeInput : kAudioObjectPropertyScopeOutput
         let streams = try wrap { try HAL.streamCount(aggregateID, scope: scope) }
         guard streams == enabled.count else {
-            log.error("Stream count mismatch (\(streams) vs \(enabled.count)); leaving all streams enabled")
+            Log.audio.error("Stream count mismatch (\(streams) vs \(enabled.count)); leaving all streams enabled")
             return
         }
         let flags = enabled.map { UInt8($0 ? 1 : 0) }
         let status = flags.withUnsafeBufferPointer {
             mb_set_stream_usage(aggregateID, proc, input, $0.baseAddress!, UInt32($0.count))
         }
-        if status != noErr { log.error("IOProcStreamUsage failed: \(status); continuing with all streams") }
+        if status != noErr { Log.audio.error("IOProcStreamUsage failed: \(status); continuing with all streams") }
     }
 
     private func waitUntil(_ what: String, timeout: TimeInterval = 2, _ condition: () -> Bool) throws {

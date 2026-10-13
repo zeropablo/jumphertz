@@ -2,7 +2,6 @@ import CoreAudio
 import Foundation
 import os
 
-let log = Logger(subsystem: "com.zeropablo.micbridge", category: "audio")
 
 /// Prefix of the UIDs of the private aggregates this process creates.
 let aggregateUIDPrefix = "com.zeropablo.micbridge.aggregate"
@@ -15,7 +14,7 @@ public final class CoreAudioSystem: AudioSystem {
         var address = HAL.address(kAudioHardwarePropertyRunLoop)
         let status = AudioObjectSetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil,
                                                 UInt32(MemoryLayout<UnsafeRawPointer?>.size), &runLoop)
-        if status != noErr { log.error("Cannot detach HAL run loop: \(status)") }
+        if status != noErr { Log.audio.error("Cannot detach HAL run loop: \(status)") }
     }
 
     public func devices() -> [DeviceInfo] {

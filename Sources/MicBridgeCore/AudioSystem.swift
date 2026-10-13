@@ -1,5 +1,13 @@
 import Foundation
 
+/// Hardware notifications concerning a running bridge. Delivered on the main queue.
+public enum BridgeEvent: Equatable, Sendable {
+    case sampleRateChanged(device: String, rate: Double)
+    case deviceDied(device: String)
+    /// The aggregate's IO cycle missed its deadline (kAudioDeviceProcessorOverload).
+    case overload
+}
+
 /// A running bridge: input channel of `input` copied to the first two outputs of `output`.
 public protocol AudioBridge: AnyObject {
     var input: DeviceInfo { get }
@@ -24,10 +32,14 @@ public protocol AudioBridge: AnyObject {
     var lastCycleFrames: Int { get }
     /// Current IO buffer size of the aggregate, as reported by the HAL.
     var bufferFrameSize: Int? { get }
+    /// Set before start(); listeners are installed while the bridge runs.
+    var onEvent: ((BridgeEvent) -> Void)? { get set }
 }
 
 /// Abstraction over the audio hardware so the control logic can be tested without CoreAudio.
 public protocol AudioSystem: AnyObject {
+    /// Device list changed (hot plug, driver reload, aggregate created elsewhere). Main queue.
+    var onDevicesChanged: (() -> Void)? { get set }
     func devices() -> [DeviceInfo]
     func visibleAggregates() -> [AggregateInfo]
     func makeBridge(input: DeviceInfo, output: DeviceInfo, inputChannel: Int, gainDb: Double,

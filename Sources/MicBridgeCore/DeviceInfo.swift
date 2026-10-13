@@ -10,9 +10,11 @@ public struct DeviceInfo: Equatable, Sendable {
     public var outputChannels: Int
     public var sampleRate: Double
     public var isAggregate: Bool
+    public var isAlive: Bool
 
     public init(id: UInt32, uid: String, name: String, manufacturer: String,
-                inputChannels: Int, outputChannels: Int, sampleRate: Double, isAggregate: Bool = false) {
+                inputChannels: Int, outputChannels: Int, sampleRate: Double, isAggregate: Bool = false,
+                isAlive: Bool = true) {
         self.id = id
         self.uid = uid
         self.name = name
@@ -21,6 +23,7 @@ public struct DeviceInfo: Equatable, Sendable {
         self.outputChannels = outputChannels
         self.sampleRate = sampleRate
         self.isAggregate = isAggregate
+        self.isAlive = isAlive
     }
 }
 

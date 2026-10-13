@@ -38,6 +38,13 @@ enum StatusCommand {
         } else {
             print("Bridge:       inactive")
         }
+        var recovery = "Rebuilds:     \(status.rebuildCount)"
+        if let last = status.lastRecovery {
+            let ago = Int(Date().timeIntervalSince(last.at))
+            recovery += " — last: \(last.reason), recovered in \(last.milliseconds) ms (\(ago) s ago)"
+        }
+        print(recovery)
+        print("Overloads:    \(status.overloadCount)")
         for warning in status.warnings { print("! \(warning)") }
     }
 

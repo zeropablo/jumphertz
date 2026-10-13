@@ -21,6 +21,11 @@ public struct AgentStatus: Codable, Equatable, Sendable {
     public var discordApps: [String]
     public var bridge: BridgeInfo?
     public var warnings: [String]
+    /// Rebuilds since the agent started (sample rate, hot plug, wake, IO stall).
+    public var rebuildCount: Int
+    public var lastRecovery: BridgeController.Recovery?
+    /// IO cycles that missed their deadline since the agent started.
+    public var overloadCount: Int
     public var updatedAt: Date
 
     public init(controller: BridgeController, pid: Int32, version: String, now: Date = Date()) {
@@ -31,6 +36,9 @@ public struct AgentStatus: Codable, Equatable, Sendable {
         permission = controller.permissionStatus
         discordApps = controller.discordApps.sorted()
         warnings = controller.warnings
+        rebuildCount = controller.rebuildCount
+        lastRecovery = controller.lastRecovery
+        overloadCount = controller.overloadCount
         updatedAt = now
         bridge = controller.bridge.map {
             BridgeInfo(inputName: $0.input.name, inputUID: $0.input.uid, inputChannel: $0.inputChannel,

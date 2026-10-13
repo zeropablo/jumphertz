@@ -9,6 +9,7 @@ final class Agent {
     private let controller: BridgeController
     private let discord = DiscordWatcher()
     private var signalSources: [DispatchSourceSignal] = []
+    private var powerObservers: [NSObjectProtocol] = []
 
     init() {
         let (config, result) = ConfigStore.effective()
@@ -26,6 +27,7 @@ final class Agent {
         controller.onChange = { [weak self] _ in self?.writeStatus() }
         discord.onChange = { [weak self] apps in self?.controller.setDiscordApps(apps) }
         discord.start()
+        observePower()
         controller.reconcile()
 
         // launchctl bootout / logout send SIGTERM: stop IO, destroy the aggregate, exit 0 so that
@@ -40,6 +42,19 @@ final class Agent {
 
         app.run()
         exit(0)
+    }
+
+    /// Stop cleanly before sleep (the USB interface may vanish), rebuild on wake.
+    private func observePower() {
+        let center = NSWorkspace.shared.notificationCenter
+        powerObservers.append(center.addObserver(forName: NSWorkspace.willSleepNotification, object: nil,
+                                                 queue: .main) { [weak self] _ in
+            self?.controller.setSuspended(true)
+        })
+        powerObservers.append(center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil,
+                                                 queue: .main) { [weak self] _ in
+            self?.controller.setSuspended(false)
+        })
     }
 
     private func terminate(signal: Int32) {

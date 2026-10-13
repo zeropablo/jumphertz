@@ -35,6 +35,8 @@ final class CoreAudioBridge: AudioBridge {
     private var context: OpaquePointer?
     private var aggregateInputLayout: [Int] = []
     private var running = false
+    private var listeners: [PropertyListener] = []
+    var onEvent: ((BridgeEvent) -> Void)?
 
     private static var counter = 0
 
@@ -133,6 +135,8 @@ final class CoreAudioBridge: AudioBridge {
         let startStatus = AudioDeviceStart(newID, proc)
         guard startStatus == noErr else { throw BridgeError.hal(HALError(startStatus, "AudioDeviceStart")) }
 
+        installListeners(aggregate: newID)
+
         if let after = try? HAL.nominalSampleRate(input.id), after != rate {
             Log.audio.error("Input interface rate changed during setup (\(Int(rate)) -> \(Int(after)) Hz)")
         }
@@ -140,6 +144,8 @@ final class CoreAudioBridge: AudioBridge {
     }
 
     func stop() {
+        listeners.forEach { $0.remove() }
+        listeners = []
         if let procID, aggregateID != 0 {
             AudioDeviceStop(aggregateID, procID)
             AudioDeviceDestroyIOProcID(aggregateID, procID)
@@ -186,6 +192,31 @@ final class CoreAudioBridge: AudioBridge {
     }
 
     // MARK: - Helpers
+
+    /// Rate and liveness of both real devices, liveness and overloads of the aggregate. Callbacks only
+    /// forward to `onEvent`; the controller decides what to do after debouncing.
+    private func installListeners(aggregate: AudioObjectID) {
+        for device in [input, output] {
+            let id = device.id, name = device.name
+            listeners += [
+                PropertyListener(id, kAudioDevicePropertyNominalSampleRate) { [weak self] in
+                    let rate = (try? HAL.nominalSampleRate(id)) ?? 0
+                    self?.onEvent?(.sampleRateChanged(device: name, rate: rate))
+                },
+                PropertyListener(id, kAudioDevicePropertyDeviceIsAlive) { [weak self] in
+                    self?.onEvent?(.deviceDied(device: name))
+                },
+            ].compactMap { $0 }
+        }
+        listeners += [
+            PropertyListener(aggregate, kAudioDevicePropertyDeviceIsAlive) { [weak self] in
+                self?.onEvent?(.deviceDied(device: "MicBridge aggregate"))
+            },
+            PropertyListener(aggregate, kAudioDeviceProcessorOverload) { [weak self] in
+                self?.onEvent?(.overload)
+            },
+        ].compactMap { $0 }
+    }
 
     /// The aggregate needs every sub-device at the same nominal rate. We may change the bridge output
     /// (a virtual device), never the input interface.

@@ -2,86 +2,6 @@ import Foundation
 import Testing
 @testable import MicBridgeCore
 
-private final class FakeBridge: AudioBridge {
-    let input: DeviceInfo
-    let output: DeviceInfo
-    var sampleRate: Double { 48000 }
-    var inputChannel: Int
-    var started = false
-    var stopped = false
-    var failOnStart = false
-
-    init(input: DeviceInfo, output: DeviceInfo, inputChannel: Int) {
-        self.input = input
-        self.output = output
-        self.inputChannel = inputChannel
-    }
-
-    func start() throws {
-        if failOnStart { throw ChannelMapError.noOutputChannels }
-        started = true
-    }
-    func stop() { stopped = true }
-    func setInputChannel(_ channel: Int) throws { inputChannel = channel }
-    func setGain(dB: Double) {}
-    func takePeak() -> Float { 0 }
-    var cycleCount: UInt64 { 0 }
-    var signalCycleCount: UInt64 { 0 }
-    var clipCount: UInt64 { 0 }
-    var lastCycleFrames: Int { 512 }
-    var bufferFrameSize: Int? { 512 }
-}
-
-private final class FakeSystem: AudioSystem {
-    var deviceList: [DeviceInfo]
-    var aggregates: [AggregateInfo] = []
-    var bridges: [FakeBridge] = []
-    var failNextStart = false
-
-    init(devices: [DeviceInfo]) { deviceList = devices }
-
-    func devices() -> [DeviceInfo] { deviceList }
-    func visibleAggregates() -> [AggregateInfo] { aggregates }
-    func makeBridge(input: DeviceInfo, output: DeviceInfo, inputChannel: Int, gainDb: Double,
-                    bufferFrames: Int?) -> AudioBridge {
-        let bridge = FakeBridge(input: input, output: output, inputChannel: inputChannel)
-        bridge.failOnStart = failNextStart
-        failNextStart = false
-        bridges.append(bridge)
-        return bridge
-    }
-    func latency(input: DeviceInfo, output: DeviceInfo, bufferFrames: Int?) -> BridgeLatency {
-        BridgeLatency(input: .init(deviceLatency: 0, safetyOffset: 0, streamLatency: 0, bufferFrames: 0),
-                      output: .init(deviceLatency: 0, safetyOffset: 0, streamLatency: 0, bufferFrames: 0),
-                      sampleRate: 48000)
-    }
-}
-
-private final class FakePermission: MicPermissionProviding {
-    var status: MicPermission
-    var requests = 0
-    var pending: ((MicPermission) -> Void)?
-
-    init(_ status: MicPermission) { self.status = status }
-
-    func request(_ completion: @escaping (MicPermission) -> Void) {
-        requests += 1
-        pending = completion
-    }
-
-    func answer(_ result: MicPermission) {
-        status = result
-        pending?(result)
-        pending = nil
-    }
-}
-
-private let scarlett = DeviceInfo(id: 10, uid: "scarlett", name: "Scarlett 16i16 4th Gen", manufacturer: "Focusrite",
-                                  inputChannels: 18, outputChannels: 18, sampleRate: 48000)
-private let blackHole = DeviceInfo(id: 20, uid: "BlackHole2ch_UID", name: "BlackHole 2ch",
-                                   manufacturer: "Existential Audio Inc.", inputChannels: 2, outputChannels: 2,
-                                   sampleRate: 48000)
-
 /// The controller runs on the main thread in the agent; these tests drive it synchronously.
 @MainActor
 struct BridgeControllerTests {
@@ -89,7 +9,9 @@ struct BridgeControllerTests {
                       config: Config = .default) -> (BridgeController, FakeSystem, FakePermission) {
         let system = FakeSystem(devices: devices)
         let perm = FakePermission(permission)
-        return (BridgeController(system: system, permission: perm, config: config), system, perm)
+        let controller = BridgeController(system: system, permission: perm, config: config,
+                                          scheduler: ManualScheduler())
+        return (controller, system, perm)
     }
 
     @Test func idleWithoutDiscord() {
@@ -165,7 +87,7 @@ struct BridgeControllerTests {
 
     @Test func startFailureReportsError() {
         let (controller, system, _) = make()
-        system.failNextStart = true
+        system.failingStarts = 1
         controller.setDiscordApps(["com.hnc.Discord"])
         #expect(controller.state == .error)
         #expect(controller.bridge == nil)

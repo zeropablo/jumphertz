@@ -7,6 +7,11 @@ import os
 let aggregateUIDPrefix = "com.zeropablo.micbridge.aggregate"
 
 public final class CoreAudioSystem: AudioSystem {
+    public var onDevicesChanged: (() -> Void)? {
+        didSet { installDeviceListListener() }
+    }
+    private var deviceListListener: PropertyListener?
+
     public init() {
         // Let the HAL dispatch its notifications on its own thread instead of the main run loop,
         // so CLI commands that never run a run loop still see devices appear (e.g. a new aggregate).
@@ -15,6 +20,14 @@ public final class CoreAudioSystem: AudioSystem {
         let status = AudioObjectSetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil,
                                                 UInt32(MemoryLayout<UnsafeRawPointer?>.size), &runLoop)
         if status != noErr { Log.audio.error("Cannot detach HAL run loop: \(status)") }
+    }
+
+    private func installDeviceListListener() {
+        guard onDevicesChanged != nil else { deviceListListener = nil; return }
+        guard deviceListListener == nil else { return }
+        deviceListListener = PropertyListener(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDevices) {
+            [weak self] in self?.onDevicesChanged?()
+        }
     }
 
     public func devices() -> [DeviceInfo] {
@@ -33,7 +46,8 @@ public final class CoreAudioSystem: AudioSystem {
             inputChannels: inputs,
             outputChannels: outputs,
             sampleRate: (try? HAL.nominalSampleRate(id)) ?? 0,
-            isAggregate: HAL.classID(id) == kAudioAggregateDeviceClassID)
+            isAggregate: HAL.classID(id) == kAudioAggregateDeviceClassID,
+            isAlive: ((try? HAL.get(id, HAL.address(kAudioDevicePropertyDeviceIsAlive), initial: UInt32(1))) ?? 1) != 0)
     }
 
     public func visibleAggregates() -> [AggregateInfo] {

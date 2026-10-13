@@ -5,6 +5,18 @@ other app running in the background.
 
 > Work in progress: installation, configuration and the full documentation come with the first release.
 
+## FAQ
+
+### Why does Activity Monitor show about 2 % CPU for MicBridge during a call?
+
+While Discord runs, MicBridge resamples the microphone in real time with libsamplerate (medium quality, to
+absorb the drift between the interface's clock and BlackHole's). That costs about 0.4 % of a performance core.
+macOS runs this light real-time thread on an efficiency core, where the same work takes about four times as
+long but uses much less energy; Activity Monitor shows time, not energy, hence ~2 %. The energy impact is
+negligible.
+
+When Discord is not running, MicBridge does nothing: no audio thread, no timer, 0.0 % CPU.
+
 ## Troubleshooting
 
 ### Reading the logs

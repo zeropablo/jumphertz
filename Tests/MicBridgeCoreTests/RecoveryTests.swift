@@ -36,6 +36,34 @@ struct RecoveryTests {
         #expect(system.outputs.isEmpty)
     }
 
+    /// Invariant (most of the time, Discord is not running): once Discord quits, nothing is left —
+    /// no leg, no timer, no periodic status — and hardware events do not wake anything up.
+    @Test func idleAfterACallIsCompletelyQuiet() {
+        startCall()
+        scheduler.advance(by: 10)
+        let staleOutput = output
+        let staleInput = system.inputs[0]
+        controller.setDiscordApps([])
+
+        var changes = 0
+        controller.onChange = { _ in changes += 1 }
+        #expect(controller.output == nil && controller.input == nil)
+        #expect(system.liveOutputs.isEmpty && system.liveInputs.isEmpty)
+        #expect(scheduler.pendingCount == 0)
+
+        // Device churn and late callbacks from the stopped legs.
+        system.onDevicesChanged?()
+        system.update("scarlett") { $0.sampleRate = 44100 }
+        staleOutput.onEvent?(.overload(uid: blackHole.uid))
+        staleInput.onEvent?(.sampleRateChanged(uid: "scarlett", rate: 44100))
+        scheduler.advance(by: 3600)
+
+        #expect(scheduler.pendingCount == 0)
+        #expect(changes == 0)
+        #expect(system.outputs.count == 1 && system.inputs.count == 1)
+        #expect(controller.counters.inputRebuilds == 0)
+    }
+
     @Test func onlyTheTickRunsDuringACall() {
         startCall()
         #expect(scheduler.pendingCount == 1)

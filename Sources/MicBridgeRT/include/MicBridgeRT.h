@@ -5,6 +5,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "MBRing.h"
+#include "MBInputStage.h"
+#include "MBOutputStage.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif

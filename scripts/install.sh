@@ -90,7 +90,7 @@ case ":$PATH:" in
 esac
 cat <<'MSG'
 Last step, in Discord: Settings › Voice & Video › Input Device = "BlackHole 2ch",
-and turn off Krisp noise suppression.
+and Noise Suppression = None.
 
 Logs:  /usr/bin/log stream --predicate 'subsystem == "com.zeropablo.jumphertz"'
 MSG

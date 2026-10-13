@@ -65,6 +65,9 @@ lipo -create "${binaries[@]}" -output "$APP/Contents/MacOS/Jumphertz"
 BUILD=${VERSION%%-*}
 sed -e "s/__VERSION__/$VERSION/g" -e "s/__BUILD__/$BUILD/g" "$ROOT/Resources/Info.plist" > "$APP/Contents/Info.plist"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
+mkdir -p "$APP/Contents/Resources"
+cp "$ROOT/LICENSE" "$APP/Contents/Resources/LICENSE.txt"
+cp "$ROOT/Resources/ThirdPartyNotices" "$APP/Contents/Resources/ThirdPartyNotices.txt"
 plutil -lint -s "$APP/Contents/Info.plist"
 
 # Extended attributes (Finder info, quarantine, AppleDouble leftovers) make codesign fail.

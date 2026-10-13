@@ -2,67 +2,144 @@
 
 **Jumphertz — clean Focusrite Scarlett mic in Discord on macOS**
 
-Discord's microphone input stutters with Focusrite Scarlett interfaces on macOS. Jumphertz routes your Scarlett
-microphone to the BlackHole 2ch virtual device, cleanly and in the background, and you pick "BlackHole 2ch" as
-Discord's input.
+[Français](#français) · [English](#english)
 
-**Jumphertz does not modify Discord and does not interact with it.** It provides a virtual microphone at the
-macOS level (BlackHole 2ch, fed by Jumphertz), which Discord uses like any other microphone. There is no risk with regard to Discord's Terms of
-Service.
+---
 
-> Beta: installation, configuration and the full documentation come with the first release.
+## Français
 
-## FAQ
+Jumphertz permet d'utiliser une **Focusrite Scarlett dans Discord sur macOS**, sans voix hachée ni robotique. Il tourne en arrière-plan et ne travaille que lorsque Discord est ouvert.
 
-### Why does Activity Monitor show about 2 % CPU for Jumphertz during a call?
+Il ne modifie pas Discord et n'interagit pas avec lui : il alimente un micro virtuel au niveau de macOS (BlackHole 2ch), que Discord utilise comme n'importe quel micro. Aucun risque pour ton compte.
 
-While Discord runs, Jumphertz resamples the microphone in real time with libsamplerate (medium quality, to
-absorb the drift between the interface's clock and BlackHole's). That costs about 0.4 % of a performance core.
-macOS runs this light real-time thread on an efficiency core, where the same work takes about four times as
-long but uses much less energy; Activity Monitor shows time, not energy, hence ~2 %. The energy impact is
-negligible.
+**Bêta** `v1.0.0-beta.1`, testée sur Scarlett 16i16 4th Gen.
 
-When Discord is not running, Jumphertz does nothing: no audio thread, no timer, 0.0 % CPU.
+### Prérequis
 
-## Troubleshooting
+macOS 13 ou plus récent, une Scarlett (tout modèle), l'app Discord et [Homebrew](https://brew.sh).
 
-### Reporting a problem
+### Installation
 
-```sh
-jumphertz --diagnose
+Dans **Terminal**, colle chaque bloc et appuie sur Entrée.
+
+**1.** Outils d'Apple (une fenêtre s'ouvre si besoin : clique sur **Installer**) :
+```
+xcode-select --install
 ```
 
-writes `~/Desktop/jumphertz-diagnose-<date>.txt` with your Mac model, macOS version, Jumphertz and BlackHole
-versions, the current state, the devices, the configuration and the last hour of logs. Your user name, home
-paths, host name and device serial numbers are masked; open the file to check it before attaching it to an
-issue.
-
-### Reading the logs
-
-Jumphertz logs to the unified log under the subsystem `com.zeropablo.jumphertz`. Important events are stored
-on disk and can be read after the fact: Discord detected / quit, sleep and wake, every rebuild with its cause,
-recovery times, underruns and overflows, BlackHole format changes while Discord runs, and errors.
-
-Use the full path `/usr/bin/log`: in zsh (the default macOS shell), a plain `log` is a different, built-in
-command.
-
-Last two hours:
-
-```sh
-/usr/bin/log show --last 2h --style compact --predicate 'subsystem == "com.zeropablo.jumphertz" AND process == "Jumphertz"'
+**2.** BlackHole (ton mot de passe Mac est demandé), puis **redémarre ton Mac** :
+```
+brew install blackhole-2ch
 ```
 
-Only rebuilds and their cause:
-
-```sh
-/usr/bin/log show --last 2h --style compact --predicate 'subsystem == "com.zeropablo.jumphertz" AND process == "Jumphertz"' | grep -i -E "rebuild|recovered"
+**3.** Jumphertz (la compilation prend une à deux minutes), puis clique sur **Autoriser** quand macOS demande l'accès au micro :
+```
+git clone --branch v1.0.0-beta.1 https://github.com/zeropablo/jumphertz.git ~/jumphertz
+cd ~/jumphertz && scripts/install.sh
 ```
 
-Live, including debug details:
-
-```sh
-/usr/bin/log stream --level debug --predicate 'subsystem == "com.zeropablo.jumphertz" AND process == "Jumphertz"'
+**4.** Rends la commande `jumphertz` disponible dans Terminal (une seule fois) :
+```
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc
 ```
 
-`jumphertz --status` shows the current state, the cumulated counters (underruns, overflows, rebuilds,
-BlackHole format changes while Discord is running) and the latency measured over the last five seconds.
+**5.** Dans Discord, **Paramètres** › **Voix et vidéo** :
+- **Périphérique d'entrée** : BlackHole 2ch
+- **Suppression du bruit** : Aucune
+
+C'est fini. Jumphertz démarre seul à chaque session.
+
+### Commandes
+
+| Commande | Effet |
+|---|---|
+| `jumphertz --status` | Vérifier que tout marche |
+| `jumphertz --set-channel 2` | Micro branché sur l'entrée 2 |
+| `jumphertz --set-gain -6` | Baisser le volume (en dB) |
+| `jumphertz --reset-config` | Réglages par défaut |
+
+Toutes les commandes : `jumphertz --help`.
+
+### Un problème ?
+
+Lance `jumphertz --diagnose` et joins le fichier créé sur ton Bureau à une [issue](https://github.com/zeropablo/jumphertz/issues). Ton nom d'utilisateur et les numéros de série y sont masqués ; ouvre-le pour vérifier avant de l'envoyer. Testeurs bêta : voir [TESTING.md](TESTING.md). Questions fréquentes et dépannage : [docs/troubleshooting.md](docs/troubleshooting.md).
+
+### Désinstaller
+
+```
+cd ~/jumphertz && scripts/uninstall.sh
+```
+
+Puis, si tu veux, supprime le dossier `~/jumphertz` et BlackHole (`brew uninstall blackhole-2ch`).
+
+---
+
+## English
+
+Jumphertz lets you use a **Focusrite Scarlett in Discord on macOS**, without choppy or robotic voice. It runs in the background and only works while Discord is open.
+
+It doesn't modify Discord or interact with it: it feeds a virtual microphone at the macOS level (BlackHole 2ch), which Discord uses like any other microphone. No risk for your account.
+
+**Beta** `v1.0.0-beta.1`, tested on Scarlett 16i16 4th Gen.
+
+### Requirements
+
+macOS 13 or later, a Scarlett (any model), the Discord app and [Homebrew](https://brew.sh).
+
+### Install
+
+In **Terminal**, paste each block and press Enter.
+
+**1.** Apple tools (a window opens if needed: click **Install**):
+```
+xcode-select --install
+```
+
+**2.** BlackHole (your Mac password is requested), then **restart your Mac**:
+```
+brew install blackhole-2ch
+```
+
+**3.** Jumphertz (building takes a minute or two), then click **Allow** when macOS asks for microphone access:
+```
+git clone --branch v1.0.0-beta.1 https://github.com/zeropablo/jumphertz.git ~/jumphertz
+cd ~/jumphertz && scripts/install.sh
+```
+
+**4.** Make the `jumphertz` command available in Terminal (once):
+```
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc
+```
+
+**5.** In Discord, **Settings** › **Voice & Video**:
+- **Input Device**: BlackHole 2ch
+- **Noise Suppression**: None
+
+Done. Jumphertz starts on its own at every login.
+
+### Commands
+
+| Command | Effect |
+|---|---|
+| `jumphertz --status` | Check that everything works |
+| `jumphertz --set-channel 2` | Mic plugged into input 2 |
+| `jumphertz --set-gain -6` | Lower the volume (in dB) |
+| `jumphertz --reset-config` | Default settings |
+
+All commands: `jumphertz --help`.
+
+### Something wrong?
+
+Run `jumphertz --diagnose` and attach the file created on your Desktop to an [issue](https://github.com/zeropablo/jumphertz/issues). Your user name and serial numbers are masked in it; open it to check before sending. Beta testers: see [TESTING.md](TESTING.md). FAQ and troubleshooting: [docs/troubleshooting.md](docs/troubleshooting.md).
+
+### Uninstall
+
+```
+cd ~/jumphertz && scripts/uninstall.sh
+```
+
+Then, if you like, delete the `~/jumphertz` folder and BlackHole (`brew uninstall blackhole-2ch`).
+
+---
+
+Made by **zeropablo** with AI assistance (Claude Code). [MIT license](LICENSE). Uses [libsamplerate](https://github.com/libsndfile/libsamplerate) (BSD-2, see [ThirdPartyNotices](Resources/ThirdPartyNotices)) and [BlackHole](https://github.com/ExistentialAudio/BlackHole) (installed separately, not distributed with Jumphertz). Not affiliated with Discord or Focusrite. Developers: [docs/development.md](docs/development.md).

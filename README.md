@@ -16,6 +16,8 @@ Jumphertz permet d'utiliser une **Focusrite Scarlett dans Discord sur macOS**, s
 
 Il ne modifie pas Discord et n'interagit pas avec lui : il alimente un micro virtuel au niveau de macOS (BlackHole 2ch), que Discord utilise comme n'importe quel micro. Aucun risque pour ton compte.
 
+Développé avec l'aide de Claude (Anthropic).
+
 ### Prérequis
 
 macOS 13 ou plus récent, une Scarlett (tout modèle), l'app Discord et [Homebrew](https://brew.sh).
@@ -88,6 +90,8 @@ Puis, si tu veux, supprime le dossier `~/jumphertz` et BlackHole (`brew uninstal
 Jumphertz lets you use a **Focusrite Scarlett in Discord on macOS**, without choppy or robotic voice. It runs in the background and only works while Discord is open.
 
 It doesn't modify Discord or interact with it: it feeds a virtual microphone at the macOS level (BlackHole 2ch), which Discord uses like any other microphone. No risk for your account.
+
+Built with the help of Claude (Anthropic).
 
 ### Requirements
 

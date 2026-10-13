@@ -4,3 +4,4 @@
 ._*
 *.xcodeproj
 xcuserdata/
+.claude/settings.local.json

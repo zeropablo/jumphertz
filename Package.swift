@@ -5,10 +5,10 @@ import PackageDescription
 let optimizedC: [CSetting] = [.unsafeFlags(["-O2"], .when(configuration: .debug))]
 
 let package = Package(
-    name: "MicBridge",
+    name: "Jumphertz",
     platforms: [.macOS(.v13)],
     products: [
-        .executable(name: "MicBridge", targets: ["MicBridge"]),
+        .executable(name: "Jumphertz", targets: ["Jumphertz"]),
     ],
     targets: [
         // libsamplerate 0.2.2 (BSD-2-Clause), vendored unmodified; see Sources/CSampleRate/VENDORED.md.
@@ -20,40 +20,40 @@ let package = Package(
         ),
         // Real-time code only: IOProcs, ring buffer, resampling stage. Pure C, no allocation in callbacks.
         .target(
-            name: "MicBridgeRT",
+            name: "JumphertzRT",
             dependencies: ["CSampleRate"],
-            path: "Sources/MicBridgeRT",
+            path: "Sources/JumphertzRT",
             cSettings: optimizedC
         ),
         // Device matching, config, channel mapping (pure, testable) + the CoreAudio implementation.
         .target(
-            name: "MicBridgeCore",
-            dependencies: ["MicBridgeRT"],
-            path: "Sources/MicBridgeCore",
+            name: "JumphertzCore",
+            dependencies: ["JumphertzRT"],
+            path: "Sources/JumphertzCore",
             linkerSettings: [.linkedFramework("CoreAudio")]
         ),
         // Agent + CLI.
         .executableTarget(
-            name: "MicBridge",
-            dependencies: ["MicBridgeCore"],
-            path: "Sources/MicBridge"
+            name: "Jumphertz",
+            dependencies: ["JumphertzCore"],
+            path: "Sources/Jumphertz"
         ),
         // Test-only C helpers: clock simulation driving the DSP stages, signal analysis, threaded ring stress.
         .target(
-            name: "MicBridgeSim",
-            dependencies: ["MicBridgeRT"],
-            path: "Tests/MicBridgeSim",
+            name: "JumphertzSim",
+            dependencies: ["JumphertzRT"],
+            path: "Tests/JumphertzSim",
             cSettings: optimizedC
         ),
         .testTarget(
-            name: "MicBridgeCoreTests",
-            dependencies: ["MicBridgeCore"],
-            path: "Tests/MicBridgeCoreTests"
+            name: "JumphertzCoreTests",
+            dependencies: ["JumphertzCore"],
+            path: "Tests/JumphertzCoreTests"
         ),
         .testTarget(
-            name: "MicBridgeRTTests",
-            dependencies: ["MicBridgeRT", "MicBridgeSim"],
-            path: "Tests/MicBridgeRTTests"
+            name: "JumphertzRTTests",
+            dependencies: ["JumphertzRT", "JumphertzSim"],
+            path: "Tests/JumphertzRTTests"
         ),
     ],
     swiftLanguageModes: [.v5]

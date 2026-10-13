@@ -8,7 +8,7 @@ Measured or studied options that were deliberately left out. Each one lists what
 
 ### Measurement
 
-During a call, about 90 % of MicBridge's CPU time is libsamplerate's `sinc_mono_vari_process` (medium
+During a call, about 90 % of Jumphertz's CPU time is libsamplerate's `sinc_mono_vari_process` (medium
 quality) on the output IO thread. Profiled with `ps -M` (per-thread CPU time) and `sample` (1 ms) on the
 release binary running both legs:
 
@@ -66,11 +66,11 @@ The real cost is ≈ 0.4 % of a performance core during calls and 0 % otherwise:
 
 Today both legs run whenever Discord is running, including when it sits open outside any call. On macOS 14+,
 the HAL exposes process objects (`kAudioHardwarePropertyProcessObjectList`, `kAudioProcessPropertyBundleID`,
-`kAudioProcessPropertyIsRunningInput`, `kAudioProcessPropertyDevices`): MicBridge could start the legs only
+`kAudioProcessPropertyIsRunningInput`, `kAudioProcessPropertyDevices`): Jumphertz could start the legs only
 while a Discord process is running input on BlackHole 2ch, and stop them (with a grace delay) afterwards.
 
 The objection raised in phase 0 (another capture app such as MiniMeters keeping BlackHole busy) no longer
-applies: BlackHole 2ch is reserved for MicBridge.
+applies: BlackHole 2ch is reserved for Jumphertz.
 
 To check before implementing:
 
@@ -82,6 +82,6 @@ To check before implementing:
 
 ## 3. Latency levers (measured, off by default)
 
-- `outputBufferFrames: 128` on MicBridge's own IOProc on BlackHole: ≈ −16 ms expected. Hardware session B
+- `outputBufferFrames: 128` on Jumphertz's own IOProc on BlackHole: ≈ −16 ms expected. Hardware session B
   postponed until after the beta.
 - `reducedLatencyMargin`: ≈ −4 ms. Skipped: not worth any risk.

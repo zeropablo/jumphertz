@@ -6,23 +6,23 @@
 # The identity lives in a dedicated keychain whose password is generated and stored next to the config, so
 # that build.sh can unlock it and sign without any prompt, independently of the login keychain.
 #
-#   ~/Library/Keychains/micbridge-dev.keychain-db
-#   ~/Library/Application Support/MicBridge/dev-keychain-pass   (chmod 600)
+#   ~/Library/Keychains/jumphertz-dev.keychain-db
+#   ~/Library/Application Support/Jumphertz/dev-keychain-pass   (chmod 600)
 #
 # Idempotent, no sudo.
 #   scripts/dev-create-identity.sh            create (or repair) the keychain and identity
 #   scripts/dev-create-identity.sh --remove   delete them (also done by uninstall.sh --dev)
 #
-# Then: MICBRIDGE_SIGN_IDENTITY="MicBridge Local Signing" scripts/install.sh
+# Then: JUMPHERTZ_SIGN_IDENTITY="Jumphertz Local Signing" scripts/install.sh
 #
-# Overrides (for tests): MICBRIDGE_IDENTITY_NAME, MICBRIDGE_DEV_KEYCHAIN, MICBRIDGE_DEV_KEYCHAIN_PASS_FILE,
-# MICBRIDGE_LEGACY_KEYCHAIN (keychain cleaned of identities created by earlier versions of this script).
+# Overrides (for tests): JUMPHERTZ_IDENTITY_NAME, JUMPHERTZ_DEV_KEYCHAIN, JUMPHERTZ_DEV_KEYCHAIN_PASS_FILE,
+# JUMPHERTZ_LEGACY_KEYCHAIN (keychain cleaned of identities created by earlier versions of this script).
 set -euo pipefail
 
-NAME=${MICBRIDGE_IDENTITY_NAME:-MicBridge Local Signing}
-KEYCHAIN=${MICBRIDGE_DEV_KEYCHAIN:-$HOME/Library/Keychains/micbridge-dev.keychain-db}
-PASS_FILE=${MICBRIDGE_DEV_KEYCHAIN_PASS_FILE:-$HOME/Library/Application Support/MicBridge/dev-keychain-pass}
-LEGACY_KEYCHAIN=${MICBRIDGE_LEGACY_KEYCHAIN:-$HOME/Library/Keychains/login.keychain-db}
+NAME=${JUMPHERTZ_IDENTITY_NAME:-Jumphertz Local Signing}
+KEYCHAIN=${JUMPHERTZ_DEV_KEYCHAIN:-$HOME/Library/Keychains/jumphertz-dev.keychain-db}
+PASS_FILE=${JUMPHERTZ_DEV_KEYCHAIN_PASS_FILE:-$HOME/Library/Application Support/Jumphertz/dev-keychain-pass}
+LEGACY_KEYCHAIN=${JUMPHERTZ_LEGACY_KEYCHAIN:-$HOME/Library/Keychains/login.keychain-db}
 OPENSSL=/usr/bin/openssl   # LibreSSL: its PKCS#12 output is readable by `security import` (OpenSSL 3's is not by default)
 
 # User keychain search list, one path per line.
@@ -130,8 +130,8 @@ fi
 cat <<MSG
 
 Ready. Build and install with:
-  MICBRIDGE_SIGN_IDENTITY="$NAME" scripts/install.sh
+  JUMPHERTZ_SIGN_IDENTITY="$NAME" scripts/install.sh
 
 The certificate is self-signed and not trusted system-wide; it does not need to be. macOS identifies
-MicBridge by this certificate for the microphone permission.
+Jumphertz by this certificate for the microphone permission.
 MSG

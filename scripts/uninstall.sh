@@ -4,13 +4,13 @@
 #   --dev       also delete the development signing keychain and its password (scripts/dev-create-identity.sh)
 set -euo pipefail
 
-LABEL=com.zeropablo.micbridge
+LABEL=com.zeropablo.jumphertz
 DOMAIN="gui/$(id -u)"
-APP="$HOME/Applications/MicBridge.app"
+APP="$HOME/Applications/Jumphertz.app"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
-LINK="$HOME/.local/bin/micbridge"
-SUPPORT="$HOME/Library/Application Support/MicBridge"
-CACHE="$HOME/Library/Caches/MicBridge"
+LINK="$HOME/.local/bin/jumphertz"
+SUPPORT="$HOME/Library/Application Support/Jumphertz"
+CACHE="$HOME/Library/Caches/Jumphertz"
 LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -59,4 +59,4 @@ if $dev; then
     rmdir "$SUPPORT" 2>/dev/null || true
 fi
 
-echo "==> MicBridge uninstalled. BlackHole 2ch was left in place (brew uninstall blackhole-2ch to remove it)."
+echo "==> Jumphertz uninstalled. BlackHole 2ch was left in place (brew uninstall blackhole-2ch to remove it)."

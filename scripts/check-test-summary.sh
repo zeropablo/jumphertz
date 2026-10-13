@@ -5,11 +5,11 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-BIN=${1:-.build/debug/MicBridge}
+BIN=${1:-.build/debug/Jumphertz}
 STOP_AFTER=${STOP_AFTER:-20}
 [[ -x "$BIN" ]] || { echo "build first: swift build"; exit 1; }
 
-out=$(mktemp -t micbridge-check)
+out=$(mktemp -t jumphertz-check)
 trap 'rm -f "$out"' EXIT
 
 "$BIN" --test --seconds 30 >"$out" 2>&1 &

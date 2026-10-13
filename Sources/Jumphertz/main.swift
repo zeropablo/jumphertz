@@ -1,7 +1,7 @@
 import Foundation
 import JumphertzCore
 
-let version = "1.0.0-beta.1"
+let version = "1.0.0"
 
 let usage = """
     Jumphertz \(version) — clean Focusrite Scarlett mic in Discord on macOS.

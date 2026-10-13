@@ -37,9 +37,10 @@ The full path always works: `~/.local/bin/jumphertz --status`.
 
 ### Discord hears nothing
 
-1. `jumphertz --status`: `State: running`, `Microphone: granted`, both `Output` and `Input` active.
-2. `Microphone: DENIED`: System Settings › Privacy & Security › Microphone › enable **Jumphertz**.
-3. Discord › Settings › Voice & Video › Input Device must be **BlackHole 2ch**.
+1. Discord › Settings › Voice & Video › Input Device must be **BlackHole 2ch**, NOT your Scarlett: BlackHole is
+   how Jumphertz sends your voice to Discord. This is the most common cause.
+2. `jumphertz --status`: `State: running`, `Microphone: granted`, both `Output` and `Input` active.
+3. `Microphone: DENIED`: System Settings › Privacy & Security › Microphone › enable **Jumphertz**.
 4. Wrong input on the Scarlett: `jumphertz --list-devices` shows the valid channels, then
    `jumphertz --set-channel N`.
 

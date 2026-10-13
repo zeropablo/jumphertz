@@ -1,8 +1,8 @@
 ---
-name: Beta test report
+name: Test report
 about: Results of the TESTING.md checklist
-title: 'Beta test report: <Scarlett model>, macOS <version>'
-labels: beta-test
+title: 'Test report: <Scarlett model>, macOS <version>'
+labels: test-report
 ---
 
 <!-- Thank you! Tick the tests that passed, write "FAIL: …" next to the ones that did not, "skipped" otherwise.

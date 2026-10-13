@@ -62,7 +62,7 @@ The real cost is ≈ 0.4 % of a performance core during calls and 0 % otherwise:
 
 ## 2. Run the legs only while Discord actually captures from BlackHole
 
-**Status:** to study after the beta.
+**Status:** to study after the first round of user feedback.
 
 Today both legs run whenever Discord is running, including when it sits open outside any call. On macOS 14+,
 the HAL exposes process objects (`kAudioHardwarePropertyProcessObjectList`, `kAudioProcessPropertyBundleID`,
@@ -83,5 +83,5 @@ To check before implementing:
 ## 3. Latency levers (measured, off by default)
 
 - `outputBufferFrames: 128` on Jumphertz's own IOProc on BlackHole: ≈ −16 ms expected. Hardware session B
-  postponed until after the beta.
+  postponed until after the first round of user feedback.
 - `reducedLatencyMargin`: ≈ −4 ms. Skipped: not worth any risk.

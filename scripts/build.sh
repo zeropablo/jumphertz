@@ -61,7 +61,7 @@ log "Assembling Jumphertz.app $VERSION"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
 lipo -create "${binaries[@]}" -output "$APP/Contents/MacOS/Jumphertz"
-# CFBundleShortVersionString carries the full version (1.0.0-beta.1); CFBundleVersion must stay numeric.
+# CFBundleShortVersionString carries the full version (e.g. 1.1.0-beta.1); CFBundleVersion must stay numeric.
 BUILD=${VERSION%%-*}
 sed -e "s/__VERSION__/$VERSION/g" -e "s/__BUILD__/$BUILD/g" "$ROOT/Resources/Info.plist" > "$APP/Contents/Info.plist"
 printf 'APPL????' > "$APP/Contents/PkgInfo"

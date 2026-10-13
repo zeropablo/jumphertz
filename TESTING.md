@@ -1,10 +1,10 @@
-# Beta testing Jumphertz
+# Testing Jumphertz
 
 Thank you for testing! You need a Mac, a Focusrite Scarlett with a microphone, and Discord. No technical
 knowledge is required: each test says what to do, what should happen, and what to do if it doesn't.
 
 When you are done (even if you only did a few tests), open a
-[Beta test report](https://github.com/zeropablo/jumphertz/issues/new?template=beta_test_report.md) and attach
+[Test report](https://github.com/zeropablo/jumphertz/issues/new?template=test_report.md) and attach
 the file created by `jumphertz --diagnose` (it's on your Desktop; your user name and serial numbers are
 masked, open it to check).
 
@@ -34,10 +34,12 @@ Write down for the report:
 
 ### Test 2 — Discord microphone test
 
-- **Do:** Discord › Settings › Voice & Video: Input Device = **BlackHole 2ch**, Noise Suppression = **None**.
+- **Do:** Discord › Settings › Voice & Video: Input Device = **BlackHole 2ch** (NOT your Scarlett: BlackHole is
+  how Jumphertz sends your voice to Discord), Noise Suppression = **None**.
   Click **Let's Check** (mic test) and talk.
 - **Expected:** your voice comes back clean, in both ears, without stuttering or robotic sound.
-- **If it fails:** run `jumphertz --list-devices` (is your Scarlett listed?) and `jumphertz --status`.
+- **If it fails:** first check that Discord's Input Device is **BlackHole 2ch**. Then run
+  `jumphertz --list-devices` (is your Scarlett listed?) and `jumphertz --status`.
   Silence: your mic may be on another input, see test 3.
 
 ### Test 3 — Change the input channel during a call

@@ -2,6 +2,10 @@
 
 **Jumphertz — clean Focusrite Scarlett mic in Discord on macOS**
 
+**Version 1.0** — testée uniquement sur une Scarlett 16i16 4th Gen (Mac Mini M4, macOS 26). Tes retours sont les bienvenus, surtout sur d'autres modèles (Solo, 2i2, 4i4…) et sur Mac Intel : ouvre une [issue](https://github.com/zeropablo/jumphertz/issues).
+
+**Version 1.0** — tested only on a Scarlett 16i16 4th Gen (Mac Mini M4, macOS 26). Feedback is very welcome, especially on other models (Solo, 2i2, 4i4…) and Intel Macs: open an [issue](https://github.com/zeropablo/jumphertz/issues).
+
 [Français](#français) · [English](#english)
 
 ---
@@ -11,8 +15,6 @@
 Jumphertz permet d'utiliser une **Focusrite Scarlett dans Discord sur macOS**, sans voix hachée ni robotique. Il tourne en arrière-plan et ne travaille que lorsque Discord est ouvert.
 
 Il ne modifie pas Discord et n'interagit pas avec lui : il alimente un micro virtuel au niveau de macOS (BlackHole 2ch), que Discord utilise comme n'importe quel micro. Aucun risque pour ton compte.
-
-**Bêta** `v1.0.0-beta.1`, testée sur Scarlett 16i16 4th Gen.
 
 ### Prérequis
 
@@ -34,7 +36,7 @@ brew install blackhole-2ch
 
 **3.** Jumphertz (la compilation prend une à deux minutes), puis clique sur **Autoriser** quand macOS demande l'accès au micro :
 ```
-git clone --branch v1.0.0-beta.1 https://github.com/zeropablo/jumphertz.git ~/jumphertz
+git clone --branch v1.0.0 https://github.com/zeropablo/jumphertz.git ~/jumphertz
 cd ~/jumphertz && scripts/install.sh
 ```
 
@@ -43,8 +45,13 @@ cd ~/jumphertz && scripts/install.sh
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc
 ```
 
+### ⚠️ Étape la plus importante : Discord
+
+> [!IMPORTANT]
+> Dans Discord, le périphérique d'entrée doit être **BlackHole 2ch**, PAS ta Scarlett. C'est par BlackHole que Jumphertz envoie ta voix à Discord. Sans ce réglage, rien ne marche.
+
 **5.** Dans Discord, **Paramètres** › **Voix et vidéo** :
-- **Périphérique d'entrée** : BlackHole 2ch
+- **Périphérique d'entrée** : **BlackHole 2ch**
 - **Suppression du bruit** : Aucune
 
 C'est fini. Jumphertz démarre seul à chaque session.
@@ -62,7 +69,9 @@ Toutes les commandes : `jumphertz --help`.
 
 ### Un problème ?
 
-Lance `jumphertz --diagnose` et joins le fichier créé sur ton Bureau à une [issue](https://github.com/zeropablo/jumphertz/issues). Ton nom d'utilisateur et les numéros de série y sont masqués ; ouvre-le pour vérifier avant de l'envoyer. Testeurs bêta : voir [TESTING.md](TESTING.md). Questions fréquentes et dépannage : [docs/troubleshooting.md](docs/troubleshooting.md).
+**Première chose à vérifier : l'entrée Discord est-elle sur BlackHole 2ch ?**
+
+Lance `jumphertz --diagnose` et joins le fichier créé sur ton Bureau à une [issue](https://github.com/zeropablo/jumphertz/issues). Ton nom d'utilisateur et les numéros de série y sont masqués ; ouvre-le pour vérifier avant de l'envoyer. Pour tester Jumphertz sur ta configuration : [TESTING.md](TESTING.md). Questions fréquentes et dépannage : [docs/troubleshooting.md](docs/troubleshooting.md).
 
 ### Désinstaller
 
@@ -79,8 +88,6 @@ Puis, si tu veux, supprime le dossier `~/jumphertz` et BlackHole (`brew uninstal
 Jumphertz lets you use a **Focusrite Scarlett in Discord on macOS**, without choppy or robotic voice. It runs in the background and only works while Discord is open.
 
 It doesn't modify Discord or interact with it: it feeds a virtual microphone at the macOS level (BlackHole 2ch), which Discord uses like any other microphone. No risk for your account.
-
-**Beta** `v1.0.0-beta.1`, tested on Scarlett 16i16 4th Gen.
 
 ### Requirements
 
@@ -102,7 +109,7 @@ brew install blackhole-2ch
 
 **3.** Jumphertz (building takes a minute or two), then click **Allow** when macOS asks for microphone access:
 ```
-git clone --branch v1.0.0-beta.1 https://github.com/zeropablo/jumphertz.git ~/jumphertz
+git clone --branch v1.0.0 https://github.com/zeropablo/jumphertz.git ~/jumphertz
 cd ~/jumphertz && scripts/install.sh
 ```
 
@@ -111,8 +118,13 @@ cd ~/jumphertz && scripts/install.sh
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc
 ```
 
+### ⚠️ Most important step: Discord
+
+> [!IMPORTANT]
+> In Discord, the input device must be **BlackHole 2ch**, NOT your Scarlett. BlackHole is how Jumphertz sends your voice to Discord. Without this setting, nothing works.
+
 **5.** In Discord, **Settings** › **Voice & Video**:
-- **Input Device**: BlackHole 2ch
+- **Input Device**: **BlackHole 2ch**
 - **Noise Suppression**: None
 
 Done. Jumphertz starts on its own at every login.
@@ -130,7 +142,9 @@ All commands: `jumphertz --help`.
 
 ### Something wrong?
 
-Run `jumphertz --diagnose` and attach the file created on your Desktop to an [issue](https://github.com/zeropablo/jumphertz/issues). Your user name and serial numbers are masked in it; open it to check before sending. Beta testers: see [TESTING.md](TESTING.md). FAQ and troubleshooting: [docs/troubleshooting.md](docs/troubleshooting.md).
+**First thing to check: is Discord's input set to BlackHole 2ch?**
+
+Run `jumphertz --diagnose` and attach the file created on your Desktop to an [issue](https://github.com/zeropablo/jumphertz/issues). Your user name and serial numbers are masked in it; open it to check before sending. To test Jumphertz on your setup: [TESTING.md](TESTING.md). FAQ and troubleshooting: [docs/troubleshooting.md](docs/troubleshooting.md).
 
 ### Uninstall
 

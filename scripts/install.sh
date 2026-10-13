@@ -88,9 +88,23 @@ case ":$PATH:" in
     *":$BIN_DIR:"*) ;;
     *) printf '%s is not in your PATH. To use the jumphertz command, add this line to ~/.zshrc:\n  export PATH="$HOME/.local/bin:$PATH"\n\n' "$BIN_DIR" ;;
 esac
+bold=""; reset=""
+if [[ -t 1 ]]; then bold=$'\033[1;33m'; reset=$'\033[0m'; fi
+printf '%s' "$bold"
 cat <<'MSG'
-Last step, in Discord: Settings › Voice & Video › Input Device = "BlackHole 2ch",
-and Noise Suppression = None.
+=====================================================================
+  MOST IMPORTANT STEP: in Discord › Settings › Voice & Video
 
-Logs:  /usr/bin/log stream --predicate 'subsystem == "com.zeropablo.jumphertz"'
+    Input Device  =  BlackHole 2ch     (NOT your Scarlett)
+
+  BlackHole is how Jumphertz sends your voice to Discord.
+  Without this setting, nothing works.
+
+    Noise Suppression  =  None
+=====================================================================
+MSG
+printf '%s' "$reset"
+cat <<'MSG'
+
+Logs:  /usr/bin/log stream --predicate 'subsystem == "com.zeropablo.jumphertz" AND process == "Jumphertz"'
 MSG

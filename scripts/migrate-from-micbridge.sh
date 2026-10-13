@@ -1,5 +1,5 @@
 #!/bin/bash
-# Removes an installation of MicBridge (the project's name before 1.0.0-beta.1) and moves its configuration
+# Removes an installation of MicBridge (the project's name before its first release) and moves its configuration
 # to Jumphertz. Called by install.sh; safe to run on its own and to run again. No sudo.
 #
 # This is the only place in the repository that still refers to the old name.

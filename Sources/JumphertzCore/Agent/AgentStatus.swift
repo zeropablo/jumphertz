@@ -49,7 +49,7 @@ public struct AgentStatus: Codable, Equatable, Sendable {
         latency = controller.latency
         counters = controller.counters
         lastRecovery = controller.lastRecovery
-        warnings = controller.warnings
+        warnings = controller.allWarnings
         updatedAt = now
     }
 

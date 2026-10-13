@@ -2,7 +2,7 @@ import AppKit
 import JumphertzCore
 import os
 
-private let log = Logger(subsystem: Log.subsystem, category: "agent")
+private let log = Logger(subsystem: Log.subsystem, category: "agent")  // agent process only
 
 /// Background agent started by launchd. Idle (no audio thread) until Discord runs.
 final class Agent {
@@ -10,11 +10,16 @@ final class Agent {
     private let discord = DiscordWatcher()
     private var signalSources: [DispatchSourceSignal] = []
     private var powerObservers: [NSObjectProtocol] = []
+    private var configWatcher: ConfigWatcher?
+    private let startupConfigError: ConfigError?
 
     init() {
         let (config, result) = ConfigStore.effective()
         if case let .invalid(error) = result {
             log.error("\(String(describing: error), privacy: .public); using defaults")
+            startupConfigError = error
+        } else {
+            startupConfigError = nil
         }
         controller = BridgeController(system: CoreAudioSystem(), permission: SystemMicPermission(), config: config)
     }
@@ -26,8 +31,11 @@ final class Agent {
         log.notice("Jumphertz \(version, privacy: .public) agent started (pid \(getpid()))")
         controller.onChange = { [weak self] _ in self?.writeStatus() }
         discord.onChange = { [weak self] apps in self?.controller.setDiscordApps(apps) }
+        if let startupConfigError { controller.rejectConfig(startupConfigError) }
         discord.start()
         observePower()
+        configWatcher = ConfigWatcher { [weak self] in self?.reloadConfig() }
+        configWatcher?.start()
         controller.reconcile()
 
         // launchctl bootout / logout send SIGTERM: stop IO, destroy the aggregate, exit 0 so that
@@ -55,6 +63,19 @@ final class Agent {
                                                  queue: .main) { [weak self] _ in
             self?.controller.setSuspended(false)
         })
+    }
+
+    /// Valid file → applied with the least disruption; invalid → previous settings kept; deleted → defaults.
+    private func reloadConfig() {
+        switch ConfigStore.load() {
+        case let .loaded(config):
+            controller.setConfig(config)
+        case .missing:
+            log.notice("config.json removed: using the default settings")
+            controller.setConfig(.default)
+        case let .invalid(error):
+            controller.rejectConfig(error)
+        }
     }
 
     private func terminate(signal: Int32) {

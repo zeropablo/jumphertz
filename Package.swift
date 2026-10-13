@@ -50,6 +50,12 @@ let package = Package(
             dependencies: ["JumphertzCore"],
             path: "Tests/JumphertzCoreTests"
         ),
+        // Runs the built `Jumphertz` binary the way users do (through PATH, a symlink, another directory).
+        .testTarget(
+            name: "JumphertzCLITests",
+            dependencies: ["Jumphertz"],
+            path: "Tests/JumphertzCLITests"
+        ),
         .testTarget(
             name: "JumphertzRTTests",
             dependencies: ["JumphertzRT", "JumphertzSim"],

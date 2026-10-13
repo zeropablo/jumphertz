@@ -4,16 +4,29 @@ import JumphertzCore
 let version = "1.0.0-beta.1"
 
 let usage = """
-    Jumphertz \(version) — routes a Focusrite Scarlett input to BlackHole for Discord.
+    Jumphertz \(version) — clean Focusrite Scarlett mic in Discord on macOS.
 
     Usage:
-      jumphertz --status                Agent, Discord and bridge state
-      jumphertz --list-devices          List Scarlett and BlackHole devices
-      jumphertz --latency               Estimated latency added by the bridge
+      jumphertz --status                Agent, Discord, bridge state, counters, measured latency
+      jumphertz --list-devices          Scarlett and BlackHole devices, with the valid settings
+      jumphertz --show-config           Current configuration
+
+    Configuration (applied by the running agent within a second):
+      jumphertz --set-channel N         Input channel of the Scarlett (1-based), live
+      jumphertz --set-gain DB           Gain in dB, -60 to +24 (e.g. -6, +3.5), live
+      jumphertz --set-device UID|auto   Scarlett to use (rebuilds the input)
+      jumphertz --set-output UID|auto   BlackHole device to feed (auto = BlackHole 2ch)
+      jumphertz --reset-config          Back to the defaults
+
+    Diagnostics:
+      jumphertz --diagnose              Write a report for bug reports (personal data masked)
+      jumphertz --latency               Measured latency of the bridge
       jumphertz --test [options]        Run the bridge for 10 s with a VU meter and IO diagnostics
           --seconds N                     Duration (default 10); Ctrl-C stops early
           --channel N                     Input channel override (1-based)
           --gain DB                       Gain override in dB
+
+    Internal:
       jumphertz --agent                 Run the background agent (started by launchd)
       jumphertz --request-permission    Ask for microphone access (run through `open`, see install.sh)
       jumphertz --version
@@ -78,6 +91,24 @@ case "--request-permission":
     PermissionCommand.run(resultFile: args.string("--result-file"))
 case "--status":
     StatusCommand.run()
+case "--set-channel":
+    guard let channel = args.int("--set-channel") else { fail("--set-channel expects a channel number, e.g. --set-channel 2") }
+    ConfigCommand.edit(.inputChannel(channel))
+case "--set-gain":
+    guard let raw = args.string("--set-gain") else { fail("--set-gain expects a value in dB, e.g. --set-gain -6") }
+    do { ConfigCommand.edit(.gainDb(try ConfigEditing.parseGain(raw))) } catch { fail(String(describing: error)) }
+case "--set-device":
+    guard let raw = args.string("--set-device") else { fail("--set-device expects a UID or auto (see jumphertz --list-devices)") }
+    ConfigCommand.edit(.inputDevice(ConfigEditing.parseUID(raw)))
+case "--set-output":
+    guard let raw = args.string("--set-output") else { fail("--set-output expects a UID or auto (see jumphertz --list-devices)") }
+    ConfigCommand.edit(.outputDevice(ConfigEditing.parseUID(raw)))
+case "--reset-config":
+    ConfigCommand.reset()
+case "--show-config":
+    ConfigCommand.show()
+case "--diagnose":
+    DiagnoseCommand.run()
 case "--list-devices":
     ListDevicesCommand.run()
 case "--latency":

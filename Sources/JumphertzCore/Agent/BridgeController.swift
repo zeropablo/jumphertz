@@ -97,6 +97,12 @@ public final class BridgeController {
     public private(set) var latency: LatencyWindow?
     public private(set) var output: OutputLeg?
     public private(set) var input: InputLeg?
+    /// Problems with the configuration itself (invalid file, channel the interface does not have). Kept until
+    /// a valid configuration resolves them.
+    public private(set) var configWarnings: [String] = []
+
+    /// Everything `jumphertz --status` should show.
+    public var allWarnings: [String] { configWarnings + warnings }
 
     /// Called after every state evaluation and periodically while bridging.
     public var onChange: ((BridgeController) -> Void)?
@@ -134,6 +140,71 @@ public final class BridgeController {
 
     public var discordRunning: Bool { !discordApps.isEmpty }
     public var permissionStatus: MicPermission { permission.status }
+
+    // MARK: - Configuration (hot reload)
+
+    /// Applies a new valid configuration with the least disruption: channel and gain live; interface or
+    /// input buffer → input leg only; output options → both legs, without writing any device format.
+    public func setConfig(_ new: Config) {
+        let old = config
+        guard new != old else {
+            if !configWarnings.isEmpty {
+                configWarnings = []
+                onChange?(self)
+            }
+            return
+        }
+        config = new
+        configWarnings = []
+        for line in ConfigEditing.changes(from: old, to: new) {
+            Log.controller.notice("Configuration changed: \(line, privacy: .public)")
+        }
+
+        switch ConfigEditing.effect(from: old, to: new) {
+        case .none:
+            onChange?(self)
+        case .startsOrStops:
+            reconcile()
+        case .rebuildsOutput:
+            if output != nil {
+                restartOutput(reason: "configuration changed")
+            } else {
+                reconcile()
+            }
+        case .rebuildsInput:
+            if input != nil {
+                restartInput(reason: "configuration changed")
+            } else {
+                reconcile()
+            }
+        case .live:
+            if let input {
+                if new.inputChannel != old.inputChannel { applyChannelLive(new.inputChannel, on: input, previous: old.inputChannel) }
+                if new.gainDb != old.gainDb { input.setGain(dB: new.gainDb) }
+            }
+            onChange?(self)
+        }
+    }
+
+    /// config.json could not be read: keep running with the previous settings and say so.
+    public func rejectConfig(_ error: ConfigError) {
+        let warning = "\(error) — keeping the previous settings."
+        Log.controller.error("Invalid configuration: \(String(describing: error), privacy: .public); keeping the previous settings")
+        configWarnings = [warning]
+        onChange?(self)
+    }
+
+    private func applyChannelLive(_ channel: Int, on input: InputLeg, previous: Int) {
+        do {
+            try input.setInputChannel(channel)
+            Log.controller.notice("Input channel \(channel) applied live")
+        } catch {
+            config.inputChannel = previous
+            let warning = "inputChannel \(channel) does not exist on \(input.device.name) (\(input.device.inputChannels) inputs); keeping channel \(previous)."
+            Log.controller.error("\(warning, privacy: .public)")
+            configWarnings = [warning]
+        }
+    }
 
     public func setDiscordApps(_ apps: Set<String>) {
         guard apps != discordApps else { return }
@@ -310,7 +381,17 @@ public final class BridgeController {
             warnings.append("bufferFrames = \(frames): \(device.name) uses this buffer size for every app while the bridge runs.")
         }
 
-        let leg = system.makeInputLeg(device: device, inputChannel: config.inputChannel, gainDb: config.gainDb,
+        // A configured channel the interface does not have (e.g. after switching to a smaller Scarlett) is a
+        // configuration problem, not a hardware one: use channel 1, say so, do not retry.
+        var channel = config.inputChannel
+        if channel > device.inputChannels {
+            let warning = "inputChannel \(channel) does not exist on \(device.name) (\(device.inputChannels) inputs); using channel 1. Fix it with: jumphertz --set-channel N"
+            Log.controller.error("\(warning, privacy: .public)")
+            configWarnings = [warning]
+            channel = 1
+        }
+
+        let leg = system.makeInputLeg(device: device, inputChannel: channel, gainDb: config.gainDb,
                                       bufferFrames: config.bufferFrames, output: output)
         leg.onEvent = { [weak self] event in self?.handle(event) }
         do {

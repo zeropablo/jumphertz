@@ -26,28 +26,42 @@ When Discord is not running, Jumphertz does nothing: no audio thread, no timer, 
 
 ## Troubleshooting
 
+### Reporting a problem
+
+```sh
+jumphertz --diagnose
+```
+
+writes `~/Desktop/jumphertz-diagnose-<date>.txt` with your Mac model, macOS version, Jumphertz and BlackHole
+versions, the current state, the devices, the configuration and the last hour of logs. Your user name, home
+paths, host name and device serial numbers are masked; open the file to check it before attaching it to an
+issue.
+
 ### Reading the logs
 
 Jumphertz logs to the unified log under the subsystem `com.zeropablo.jumphertz`. Important events are stored
 on disk and can be read after the fact: Discord detected / quit, sleep and wake, every rebuild with its cause,
 recovery times, underruns and overflows, BlackHole format changes while Discord runs, and errors.
 
-Last two hours (attach this to GitHub issues):
+Use the full path `/usr/bin/log`: in zsh (the default macOS shell), a plain `log` is a different, built-in
+command.
+
+Last two hours:
 
 ```sh
-log show --last 2h --style compact --predicate 'subsystem == "com.zeropablo.jumphertz"'
+/usr/bin/log show --last 2h --style compact --predicate 'subsystem == "com.zeropablo.jumphertz" AND process == "Jumphertz"'
 ```
 
 Only rebuilds and their cause:
 
 ```sh
-log show --last 2h --style compact --predicate 'subsystem == "com.zeropablo.jumphertz"' | grep -i -E "rebuild|recovered"
+/usr/bin/log show --last 2h --style compact --predicate 'subsystem == "com.zeropablo.jumphertz" AND process == "Jumphertz"' | grep -i -E "rebuild|recovered"
 ```
 
 Live, including debug details:
 
 ```sh
-log stream --level debug --predicate 'subsystem == "com.zeropablo.jumphertz"'
+/usr/bin/log stream --level debug --predicate 'subsystem == "com.zeropablo.jumphertz" AND process == "Jumphertz"'
 ```
 
 `jumphertz --status` shows the current state, the cumulated counters (underruns, overflows, rebuilds,

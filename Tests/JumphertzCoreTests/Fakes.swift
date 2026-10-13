@@ -63,8 +63,17 @@ final class FakeInputLeg: InputLeg {
         stopped = true
         output.setInputRate(0)
     }
-    func setInputChannel(_ channel: Int) throws { inputChannel = channel }
-    func setGain(dB: Double) {}
+    var gains: [Double] = []
+    var channelChanges: [Int] = []
+    /// Like the real leg: a channel the interface does not have is refused.
+    func setInputChannel(_ channel: Int) throws {
+        guard channel >= 1, channel <= device.inputChannels else {
+            throw ChannelMapError.inputChannelOutOfRange(requested: channel, available: device.inputChannels)
+        }
+        inputChannel = channel
+        channelChanges.append(channel)
+    }
+    func setGain(dB: Double) { gains.append(dB) }
     func takePeak() -> Float { 0 }
     var cycleCount: UInt64 {
         if !stalled { cycles += 94 }
@@ -200,3 +209,11 @@ let scarlett = DeviceInfo(id: 10, uid: "scarlett", name: "Scarlett 16i16 4th Gen
 let blackHole = DeviceInfo(id: 20, uid: "BlackHole2ch_UID", name: "BlackHole 2ch",
                            manufacturer: "Existential Audio Inc.", inputChannels: 2, outputChannels: 2,
                            sampleRate: 48000)
+
+let scarlettSolo = DeviceInfo(id: 30, uid: "solo", name: "Scarlett Solo 4th Gen", manufacturer: "Focusrite",
+                              inputChannels: 2, outputChannels: 2, sampleRate: 48000)
+let blackHole16 = DeviceInfo(id: 40, uid: "BlackHole16ch_UID", name: "BlackHole 16ch",
+                             manufacturer: "Existential Audio Inc.", inputChannels: 16, outputChannels: 16,
+                             sampleRate: 48000)
+let builtInMic = DeviceInfo(id: 50, uid: "BuiltInMicrophoneDevice", name: "MacBook Pro Microphone",
+                            manufacturer: "Apple Inc.", inputChannels: 1, outputChannels: 0, sampleRate: 48000)

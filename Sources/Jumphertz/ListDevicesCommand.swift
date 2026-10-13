@@ -7,7 +7,10 @@ enum ListDevicesCommand {
         let devices = system.devices()
         let (config, configResult) = ConfigStore.effective()
 
-        print("Config: \(Paths.configFile.path) — \(describe(configResult))\n")
+        print("Config: \(ConfigCommand.displayPath(Paths.configFile)) — \(describe(configResult))")
+        print("  inputChannel \(config.inputChannel), gain \(String(format: "%+.1f", config.gainDb)) dB, "
+              + "device \(config.deviceUID.map { "\"\($0)\"" } ?? "auto"), output \(config.outputDeviceUID.map { "\"\($0)\"" } ?? "auto")")
+        print("  (jumphertz --show-config for details)\n")
 
         let inputSelection = DeviceMatching.selectInput(from: devices, preferredUID: config.deviceUID)
         var selectedInputUID: String?
@@ -22,6 +25,8 @@ enum ListDevicesCommand {
             print("      UID:          \(device.uid)")
             print("      Inputs:       \(device.inputChannels)   Outputs: \(device.outputChannels)")
             print("      Sample rate:  \(format(rate: device.sampleRate))")
+            print("      Use it:       jumphertz --set-device \"\(device.uid)\"   (or auto)")
+            print("      Channels:     jumphertz --set-channel 1…\(device.inputChannels)")
         }
         switch inputSelection {
         case let .selected(_, warning?): print("  ! \(warning)")
@@ -42,6 +47,7 @@ enum ListDevicesCommand {
             print("      UID:          \(device.uid)")
             print("      Channels:     in \(device.inputChannels) / out \(device.outputChannels)")
             print("      Sample rate:  \(format(rate: device.sampleRate))")
+            print("      Use it:       jumphertz --set-output \"\(device.uid)\"   (or auto = BlackHole 2ch)")
         }
         if let selectedOutput, !DeviceMatching.isBlackHole(selectedOutput) {
             print("  Bridge output (outputDeviceUID): \(selectedOutput.name) — \(selectedOutput.uid)")

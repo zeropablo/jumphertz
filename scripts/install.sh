@@ -92,5 +92,5 @@ cat <<'MSG'
 Last step, in Discord: Settings › Voice & Video › Input Device = "BlackHole 2ch",
 and turn off Krisp noise suppression.
 
-Logs:  log stream --predicate 'subsystem == "com.zeropablo.jumphertz"'
+Logs:  /usr/bin/log stream --predicate 'subsystem == "com.zeropablo.jumphertz"'
 MSG

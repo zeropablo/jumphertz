@@ -6,6 +6,8 @@
 
 **Version 1.0** — tested only on a Scarlett 16i16 4th Gen (Mac Mini M4, macOS 26). Feedback is very welcome, especially on other models (Solo, 2i2, 4i4…) and Intel Macs: open an [issue](https://github.com/zeropablo/jumphertz/issues).
 
+Youtube Tuto: https://www.youtube.com/watch?v=2-ouzThCcSY
+
 [Français](#français) · [English](#english)
 
 ---

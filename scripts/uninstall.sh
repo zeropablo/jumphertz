@@ -10,7 +10,7 @@ APP="$HOME/Applications/Jumphertz.app"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 LINK="$HOME/.local/bin/jumphertz"
 SUPPORT="$HOME/Library/Application Support/Jumphertz"
-CACHE="$HOME/Library/Caches/Jumphertz"
+CACHE="$HOME/Library/Caches/Jumphertz"   # build/, swiftpm-arm64/, swiftpm-x86_64/, swiftpm-manifest/
 LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)

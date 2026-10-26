@@ -25,6 +25,22 @@ rebuilds its input in under a second; Discord keeps its microphone.
 
 ## Troubleshooting
 
+### Installation fails after a macOS update
+
+Typical symptoms: `Package.swift: error: extra argument 'swiftLanguageModes' in call`, or compiler / SDK
+errors during `scripts/install.sh`. A macOS update can leave Apple's Command Line Tools half replaced (a new
+compiler with old pieces; `pkgutil --pkg-info=com.apple.pkg.CLTools_Executables` may then report no receipt).
+`scripts/install.sh` checks this before building and prints the fix. Reinstall the tools (your Mac password is
+requested), then run the installer again:
+
+```sh
+sudo rm -rf /Library/Developer/CommandLineTools
+xcode-select --install
+```
+
+If Xcode is installed and selected instead (`xcode-select -p` shows a path inside `Xcode.app`), update Xcode or
+switch to the Command Line Tools: `sudo xcode-select --switch /Library/Developer/CommandLineTools`.
+
 ### `jumphertz: command not found`
 
 `~/.local/bin` is not in your PATH. Run once:

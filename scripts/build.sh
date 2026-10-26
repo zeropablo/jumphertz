@@ -10,13 +10,13 @@
 #                            Unset = ad hoc signature.
 #   JUMPHERTZ_DEV_KEYCHAIN, JUMPHERTZ_DEV_KEYCHAIN_PASS_FILE  override the dev keychain location.
 #   JUMPHERTZ_CACHE_DIR      build location (default ~/Library/Caches/Jumphertz)
+#   JUMPHERTZ_BUILD_SYSTEM   passed to `swift build --build-system` (native, swiftbuild); unset = Swift's default
 #
 # Prints the path of the signed bundle on the last line of stdout.
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 CACHE=${JUMPHERTZ_CACHE_DIR:-$HOME/Library/Caches/Jumphertz}
-SCRATCH="$CACHE/swiftpm"
 OUT="$CACHE/build"
 APP="$OUT/Jumphertz.app"
 IDENTITY=${JUMPHERTZ_SIGN_IDENTITY:--}
@@ -25,6 +25,7 @@ DEV_PASS_FILE=${JUMPHERTZ_DEV_KEYCHAIN_PASS_FILE:-$HOME/Library/Application Supp
 ARCHS=(arm64 x86_64)
 
 log() { printf '==> %s\n' "$*" >&2; }
+die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 
 # Fail before the long build if the signing identity is not usable.
 keychain_args=()
@@ -47,20 +48,59 @@ fi
 VERSION=$(sed -nE 's/^let version = "([^"]+)".*/\1/p' "$ROOT/Sources/Jumphertz/main.swift")
 [[ -n "$VERSION" ]] || { echo "error: cannot read version from main.swift" >&2; exit 1; }
 
-# `swift build --arch arm64 --arch x86_64` needs Xcode's xcbuild; with only the Command Line Tools we
-# build each architecture separately and merge them.
-binaries=()
+# One build per architecture, each in its own scratch directory, then merged with lipo. Never assume where
+# the product lands: the native build system uses <scratch>/<triple>/release, Swift Build (the backend
+# introduced as an option in Swift 6.2 and used by default later) uses <scratch>/out/Products/Release with
+# no per-triple folder, so a shared scratch directory lets one architecture overwrite the other. Some
+# versions also produce a universal product for a single --triple. Hence: separate scratch directories,
+# the path from --show-bin-path, and an architecture check on everything lipo touches.
+build_system=()
+[[ -n "${JUMPHERTZ_BUILD_SYSTEM:-}" ]] && build_system=(--build-system "$JUMPHERTZ_BUILD_SYSTEM")
+rm -rf "$CACHE/swiftpm"   # shared scratch directory of Jumphertz 1.0.0
+SLICES="$OUT/slices"
+rm -rf "$SLICES"
+mkdir -p "$SLICES"
+
+slices=()
 for arch in "${ARCHS[@]}"; do
+    options=(-c release --package-path "$ROOT" --scratch-path "$CACHE/swiftpm-$arch"
+             --triple "$arch-apple-macosx13.0" ${build_system[@]+"${build_system[@]}"})
     log "Building $arch (release)"
-    swift build -c release --package-path "$ROOT" --scratch-path "$SCRATCH" \
-        --triple "$arch-apple-macosx13.0" --product Jumphertz >&2
-    binaries+=("$SCRATCH/$arch-apple-macosx/release/Jumphertz")
+    swift build "${options[@]}" --product Jumphertz >&2
+    product="$(swift build "${options[@]}" --show-bin-path)/Jumphertz"
+    [[ -f "$product" ]] || die "the $arch build reported success but $product does not exist"
+
+    archs=$(lipo -archs "$product")
+    case " $archs " in
+        *" $arch "*) ;;
+        *) die "the $arch build produced a binary for [$archs], not $arch ($product)" ;;
+    esac
+    slice="$SLICES/Jumphertz-$arch"
+    if [[ "$archs" == "$arch" ]]; then
+        cp "$product" "$slice"
+    else
+        log "The $arch build produced [$archs]; keeping its $arch slice"
+        lipo "$product" -thin "$arch" -output "$slice"
+    fi
+    [[ "$(lipo -archs "$slice")" == "$arch" ]] || die "$slice is not a $arch binary"
+    slices+=("$slice")
 done
 
 log "Assembling Jumphertz.app $VERSION"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
-lipo -create "${binaries[@]}" -output "$APP/Contents/MacOS/Jumphertz"
+lipo -create "${slices[@]}" -output "$APP/Contents/MacOS/Jumphertz"
+final_archs=$(lipo -archs "$APP/Contents/MacOS/Jumphertz" | tr ' ' '\n' | sort | xargs)
+[[ "$final_archs" == "arm64 x86_64" ]] || die "the app binary is [$final_archs], expected arm64 + x86_64"
+rm -rf "$SLICES"
+
+# Smoke-run both slices (the x86_64 one through Rosetta, when it is installed).
+"$APP/Contents/MacOS/Jumphertz" --version >/dev/null || die "the app binary does not run"
+if arch -x86_64 /usr/bin/true 2>/dev/null; then
+    arch -x86_64 "$APP/Contents/MacOS/Jumphertz" --version >/dev/null || die "the x86_64 slice does not run"
+else
+    log "Rosetta not installed: x86_64 slice not run"
+fi
 # CFBundleShortVersionString carries the full version (e.g. 1.1.0-beta.1); CFBundleVersion must stay numeric.
 BUILD=${VERSION%%-*}
 sed -e "s/__VERSION__/$VERSION/g" -e "s/__BUILD__/$BUILD/g" "$ROOT/Resources/Info.plist" > "$APP/Contents/Info.plist"

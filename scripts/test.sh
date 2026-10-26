@@ -4,9 +4,11 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Only when the Command Line Tools are the selected toolchain: with Xcode (CI runners), its own compiler
+# finds its own Testing module, and adding the Command Line Tools' copy would mix two versions.
 CLT=/Library/Developer/CommandLineTools/Library/Developer
 args=()
-if [[ -d "$CLT/Frameworks/Testing.framework" ]]; then
+if [[ "$(xcode-select -p 2>/dev/null)" == /Library/Developer/CommandLineTools* && -d "$CLT/Frameworks/Testing.framework" ]]; then
     args=(-Xswiftc -F -Xswiftc "$CLT/Frameworks"
           -Xlinker -F -Xlinker "$CLT/Frameworks"
           -Xlinker -rpath -Xlinker "$CLT/Frameworks"

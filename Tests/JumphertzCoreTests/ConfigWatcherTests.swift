@@ -21,7 +21,8 @@ struct ConfigWatcherTests {
         return (file, watcher, counter)
     }
 
-    private func settle() async throws { try await Task.sleep(for: .milliseconds(600)) }
+    /// Debounce (0.2 s) plus generous slack for slow CI runners.
+    private func settle() async throws { try await Task.sleep(for: .milliseconds(1200)) }
 
     @Test func atomicWriteIsDetected() async throws {
         let (file, watcher, counter) = try setUp()

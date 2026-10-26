@@ -23,20 +23,23 @@ die() { printf '\nerror: %s\n' "$*" >&2; exit 1; }
 [[ $EUID -ne 0 ]] || die "do not run this script with sudo; Jumphertz installs for the current user only."
 
 step "Checking requirements"
-if ! xcode-select -p >/dev/null 2>&1 || ! command -v swift >/dev/null 2>&1; then
-    die "the Xcode Command Line Tools are required. Install them with:  xcode-select --install"
-fi
+"$ROOT/scripts/check-toolchain.sh" || exit 1
 if [[ ! -d /Library/Audio/Plug-Ins/HAL/BlackHole2ch.driver ]] \
    && ! system_profiler SPAudioDataType 2>/dev/null | grep -q "BlackHole 2ch:"; then
     die "BlackHole 2ch is not installed. Install it with:  brew install blackhole-2ch
        (or from https://existential.audio/blackhole/), then run this script again."
 fi
-echo "Command Line Tools: $(xcode-select -p)"
 echo "BlackHole 2ch: found"
 
 step "Building"
-BUILT=$("$ROOT/scripts/build.sh" | tail -1)
-[[ -d "$BUILT" ]] || die "build failed"
+if ! BUILT=$("$ROOT/scripts/build.sh" | tail -1) || [[ ! -d "$BUILT" ]]; then
+    die "the build failed (see the messages above).
+       If it mentions the compiler or the SDK, Apple's Command Line Tools may be damaged (common after a
+       macOS update): sudo rm -rf /Library/Developer/CommandLineTools && xcode-select --install
+       Si le build échoue, les Command Line Tools d'Apple sont peut-être abîmés (fréquent après une mise à
+       jour de macOS) : sudo rm -rf /Library/Developer/CommandLineTools && xcode-select --install
+       Otherwise / Sinon : https://github.com/zeropablo/jumphertz/issues"
+fi
 
 step "Previous installation under the old name (MicBridge)"
 "$ROOT/scripts/migrate-from-micbridge.sh"

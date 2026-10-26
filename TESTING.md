@@ -1,5 +1,7 @@
 # Testing Jumphertz
 
+These tests are written for **Jumphertz 1.0.1** (`jumphertz --version`).
+
 Thank you for testing! You need a Mac, a Focusrite Scarlett with a microphone, and Discord. No technical
 knowledge is required: each test says what to do, what should happen, and what to do if it doesn't.
 

@@ -38,6 +38,19 @@ scripts/check-test-summary.sh   # hardware check: jumphertz --test interrupted a
 
 The bundle is assembled outside the source tree because `codesign` fails on exFAT volumes.
 
+`build.sh` builds each architecture in its own scratch directory (`swiftpm-arm64`, `swiftpm-x86_64`), takes
+the product path from `swift build --show-bin-path`, keeps only the expected slice if a build returns a
+universal product, checks every slice and the merged binary with `lipo`, and runs both slices. It works with
+SwiftPM's native build system and with Swift Build (`--build-system swiftbuild`, the backend Swift 6.3 uses
+on macOS 27), which puts products in `out/Products/Release` without a per-architecture folder. Force one with
+`JUMPHERTZ_BUILD_SYSTEM=native|swiftbuild scripts/build.sh`.
+
+`scripts/check-toolchain.sh` (run by `install.sh`) refuses to start the build when Package.swift does not
+compile with the selected toolchain, and explains how to reinstall the Command Line Tools.
+
+Continuous integration (`.github/workflows/ci.yml`) runs `scripts/test.sh` and `scripts/build.sh` on macOS 26
+and macOS 15 (Apple Silicon) and macOS 15 Intel, on every push and tag.
+
 ## Signing during development
 
 By default the app is signed ad hoc, and `install.sh` resets the microphone permission because every build

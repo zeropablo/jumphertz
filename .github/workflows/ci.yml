@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # macos-26 = macos-latest (Apple Silicon); macos-15 (Apple Silicon); macos-15-intel runs the tests natively on x86_64.
+        os: [macos-26, macos-15, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          sw_vers
+          uname -m
+          xcode-select -p
+          swift --version
+
+      - name: Check toolchain
+        run: scripts/check-toolchain.sh
+
+      - name: Unit tests
+        run: scripts/test.sh
+
+      - name: Universal app (default build system)
+        run: scripts/build.sh
+
+      - name: Universal app (Swift Build backend, when available)
+        run: |
+          if swift build --help 2>&1 | grep -q swiftbuild; then
+            JUMPHERTZ_BUILD_SYSTEM=swiftbuild JUMPHERTZ_CACHE_DIR="$RUNNER_TEMP/jumphertz-swiftbuild" scripts/build.sh
+          else
+            echo "This Swift has no --build-system swiftbuild option: skipped."
+          fi

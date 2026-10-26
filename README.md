@@ -2,9 +2,9 @@
 
 **Jumphertz — clean Focusrite Scarlett mic in Discord on macOS**
 
-**Version 1.0** — testée uniquement sur une Scarlett 16i16 4th Gen (Mac Mini M4, macOS 26). Tes retours sont les bienvenus, surtout sur d'autres modèles (Solo, 2i2, 4i4…) et sur Mac Intel : ouvre une [issue](https://github.com/zeropablo/jumphertz/issues).
+**Version 1.0.1** — testée uniquement sur une Scarlett 16i16 4th Gen (Mac Mini M4, macOS 26). Tes retours sont les bienvenus, surtout sur d'autres modèles (Solo, 2i2, 4i4…) et sur Mac Intel : ouvre une [issue](https://github.com/zeropablo/jumphertz/issues).
 
-**Version 1.0** — tested only on a Scarlett 16i16 4th Gen (Mac Mini M4, macOS 26). Feedback is very welcome, especially on other models (Solo, 2i2, 4i4…) and Intel Macs: open an [issue](https://github.com/zeropablo/jumphertz/issues).
+**Version 1.0.1** — tested only on a Scarlett 16i16 4th Gen (Mac Mini M4, macOS 26). Feedback is very welcome, especially on other models (Solo, 2i2, 4i4…) and Intel Macs: open an [issue](https://github.com/zeropablo/jumphertz/issues).
 
 Youtube Tuto: https://www.youtube.com/watch?v=2-ouzThCcSY
 
@@ -40,8 +40,8 @@ brew install blackhole-2ch
 
 **3.** Jumphertz (la compilation prend une à deux minutes), puis clique sur **Autoriser** quand macOS demande l'accès au micro :
 ```
-git clone --branch v1.0.0 https://github.com/zeropablo/jumphertz.git ~/jumphertz
-cd ~/jumphertz && scripts/install.sh
+git clone https://github.com/zeropablo/jumphertz.git ~/jumphertz
+cd ~/jumphertz && git checkout -q v1.0.1 && scripts/install.sh
 ```
 
 **4.** Rends la commande `jumphertz` disponible dans Terminal (une seule fois) :
@@ -74,6 +74,8 @@ Toutes les commandes : `jumphertz --help`.
 ### Un problème ?
 
 **Première chose à vérifier : l'entrée Discord est-elle sur BlackHole 2ch ?**
+
+L'installation échoue après une mise à jour de macOS (erreur dans `Package.swift`, compilateur ou SDK) ? Les outils d'Apple sont abîmés : réinstalle-les avec `sudo rm -rf /Library/Developer/CommandLineTools && xcode-select --install`, puis relance `scripts/install.sh`.
 
 Lance `jumphertz --diagnose` et joins le fichier créé sur ton Bureau à une [issue](https://github.com/zeropablo/jumphertz/issues). Ton nom d'utilisateur et les numéros de série y sont masqués ; ouvre-le pour vérifier avant de l'envoyer. Pour tester Jumphertz sur ta configuration : [TESTING.md](TESTING.md). Questions fréquentes et dépannage : [docs/troubleshooting.md](docs/troubleshooting.md).
 
@@ -115,8 +117,8 @@ brew install blackhole-2ch
 
 **3.** Jumphertz (building takes a minute or two), then click **Allow** when macOS asks for microphone access:
 ```
-git clone --branch v1.0.0 https://github.com/zeropablo/jumphertz.git ~/jumphertz
-cd ~/jumphertz && scripts/install.sh
+git clone https://github.com/zeropablo/jumphertz.git ~/jumphertz
+cd ~/jumphertz && git checkout -q v1.0.1 && scripts/install.sh
 ```
 
 **4.** Make the `jumphertz` command available in Terminal (once):
@@ -149,6 +151,8 @@ All commands: `jumphertz --help`.
 ### Something wrong?
 
 **First thing to check: is Discord's input set to BlackHole 2ch?**
+
+Installation fails after a macOS update (error in `Package.swift`, the compiler or the SDK)? Apple's tools are damaged: reinstall them with `sudo rm -rf /Library/Developer/CommandLineTools && xcode-select --install`, then run `scripts/install.sh` again.
 
 Run `jumphertz --diagnose` and attach the file created on your Desktop to an [issue](https://github.com/zeropablo/jumphertz/issues). Your user name and serial numbers are masked in it; open it to check before sending. To test Jumphertz on your setup: [TESTING.md](TESTING.md). FAQ and troubleshooting: [docs/troubleshooting.md](docs/troubleshooting.md).
 

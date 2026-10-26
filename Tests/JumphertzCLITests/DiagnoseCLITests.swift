@@ -40,7 +40,10 @@ struct DiagnoseCLITests {
         let report = try String(contentsOf: try #require(files.first { $0.lastPathComponent.hasPrefix("jumphertz-diagnose-") }),
                                 encoding: .utf8)
         #expect(!report.contains("could not run"))
-        #expect(report.contains("Executable:   \(real.path)"))
+        // The report masks the home directory: on CI the checkout (and so the binary) lives under it.
+        let home = NSHomeDirectory()
+        let shown = real.path.hasPrefix(home + "/") ? "~" + real.path.dropFirst(home.count) : real.path
+        #expect(report.contains("Executable:   \(shown)\n"))
         #expect(!report.contains(cwd.path))
         for section in ["jumphertz --status", "jumphertz --list-devices", "jumphertz --show-config"] {
             let body = report.components(separatedBy: "==== \(section) ====\n").last?.prefix(40) ?? ""
